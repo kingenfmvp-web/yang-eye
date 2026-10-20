@@ -300,13 +300,17 @@ def step(ledger: dict[str, list[dict]], snap: pd.DataFrame, log=print) -> dict[s
     dates = sorted({r["date"] for r in snaps})[-SNAPSHOT_DAYS:]
     ledger["value_snapshots"] = [r for r in snaps if r["date"] in dates]
 
-    # 2. 除權息（股利再投入）
+    # 2. 除權息（股利再投入）、分割與面額變更
     last = acct["last_update"] or acct["inception"]
     if acct["last_update"]:
+        acts = data.corporate_actions()
+        acts = acts[(acts["date"] > last) & (acts["date"] <= today)]
         for h in ledger["holdings"]:
-            f = dividend_factors([h["stock_id"]], last, today).get(h["stock_id"])
-            if f:
-                log(f"{h['stock_id']} 除權息，股數 ×{f:.4f}")
+            f = dividend_factors([h["stock_id"]], last, today).get(h["stock_id"], 1.0)
+            for _, a in acts[acts["stock_id"] == h["stock_id"]].iterrows():
+                f /= a["factor"]  # 1 拆 4：參考價變 1/4，股數變 4 倍
+            if f != 1.0:
+                log(f"{h['stock_id']} 除權息／分割，股數 ×{f:.4f}")
                 h["shares"] = int(round(h["shares"] * f))
 
     # 3. 換股

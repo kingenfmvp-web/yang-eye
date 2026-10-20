@@ -94,8 +94,24 @@ def dividends(stock_id: str, start: str = "2013-01-01") -> pd.DataFrame:
                    lambda: _finmind("TaiwanStockDividendResult", stock_id, start))
 
 
+def corporate_actions() -> pd.DataFrame:
+    """分割、反分割與面額變更（全市場各一次呼叫）。factor＝恢復交易參考價 / 停止交易前收盤。
+
+    減資表免費版必須逐檔查詢，沒有納入；回測已確認持股期間沒有未還原的異常跳動。
+    """
+    split = _cached("TaiwanStockSplitPrice", lambda: _finmind("TaiwanStockSplitPrice"))
+    par = _cached("TaiwanStockParValueChange",
+                  lambda: _finmind("TaiwanStockParValueChange", None, "2010-01-01"))
+    rows = pd.concat([
+        split.rename(columns={"before_price": "before", "after_price": "after"})[["date", "stock_id", "before", "after"]],
+        par.rename(columns={"before_close": "before", "after_ref_close": "after"})[["date", "stock_id", "before", "after"]],
+    ]).drop_duplicates(["date", "stock_id"])
+    rows = rows[(rows["before"] > 0) & (rows["after"] > 0)]
+    return rows.assign(date=pd.to_datetime(rows["date"]), factor=rows["after"] / rows["before"])
+
+
 def adjust_close(price: pd.DataFrame, div: pd.DataFrame) -> pd.Series:
-    """向後還原：除權息日之前的價格乘上 參考價/前收 的累積因子。"""
+    """向後還原：除權息、分割、面額變更日之前的價格乘上 參考價/前收 的累積因子。"""
     close = price.set_index(pd.to_datetime(price["date"]))["close"]
     close = close.where(close > 0).ffill()  # 無成交日價格為 0，沿用前一日
     factor = pd.Series(1.0, index=close.index)
@@ -105,6 +121,11 @@ def adjust_close(price: pd.DataFrame, div: pd.DataFrame) -> pd.Series:
         for _, row in d.iterrows():
             if row["date"] in factor.index:
                 factor[row["date"]] *= row["after_price"] / row["before_price"]
+    sid = price["stock_id"].iloc[0] if len(price) else None
+    acts = corporate_actions()
+    for _, row in acts[acts["stock_id"] == sid].iterrows():
+        if row["date"] in factor.index:
+            factor[row["date"]] *= row["factor"]
     mult = factor[::-1].cumprod()[::-1].shift(-1).fillna(1.0)
     return close * mult
 
