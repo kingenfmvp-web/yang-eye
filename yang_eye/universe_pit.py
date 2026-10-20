@@ -45,6 +45,22 @@ def names() -> dict[str, str]:
     return out
 
 
+UMBRELLA = {"電子工業", "化學生技醫療", "其他", "創新板股票", "創新版股票"}
+
+
+def industries() -> dict[str, str]:
+    """每檔股票的產業別。一檔有多個分類時取細類（半導體業），不取大類（電子工業）。
+
+    注意：這是 FinMind 目前的分類，回測時用的是今天的產業別。
+    """
+    info, _ = _reference()
+    out = {}
+    for sid, g in info.groupby("stock_id"):
+        cats = [c for c in g["industry_category"].unique() if c not in UMBRELLA]
+        out[sid] = cats[0] if cats else g["industry_category"].iloc[0]
+    return out
+
+
 def _download(stock_ids: list[str], fetchers, label: str, wait_minutes: int = 10) -> None:
     """逐檔下載；額度用完就等一下再繼續，直到全部抓完（已快取的不耗額度）。"""
     i = 0

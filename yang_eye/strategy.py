@@ -18,6 +18,8 @@ class RevenueMomentumParams:
     min_avg_volume_lots: float = 1000  # 近 20 日均量（張）
     top_n: int = 10
     rebalance_day: int = 11
+    max_per_industry: int | None = None  # v0.3：同產業最多幾檔（None＝不限）
+    fill: str | None = None  # v0.3：選不滿時空位怎麼放："ew"＝選股池等權重、ETF 代號（如 "0050"）、None＝留現金
 
 
 def revenue_signals(rev: pd.DataFrame) -> dict[str, pd.DataFrame]:
@@ -43,9 +45,27 @@ def rebalance_dates(trading_days: pd.DatetimeIndex, day: int = 11) -> pd.Datetim
     return pd.DatetimeIndex(s.groupby(s.index.to_period("M")).first().values)
 
 
+def select(df: pd.DataFrame, p: RevenueMomentumParams, industry: dict[str, str] | None) -> list[str]:
+    """依 3 月營收 YoY 由高到低挑，同產業超過上限就跳過。沒有產業別的股票各自算一類。"""
+    ranked = df.sort_values("yoy3", ascending=False).index
+    if p.max_per_industry is None or industry is None:
+        return ranked[:p.top_n].tolist()
+    picks, count = [], {}
+    for sid in ranked:
+        ind = industry.get(sid, f"?{sid}")
+        if count.get(ind, 0) >= p.max_per_industry:
+            continue
+        picks.append(sid)
+        count[ind] = count.get(ind, 0) + 1
+        if len(picks) == p.top_n:
+            break
+    return picks
+
+
 def target_weights(close: pd.DataFrame, volume: pd.DataFrame, rev: pd.DataFrame,
                    p: RevenueMomentumParams, start: str = "2015-01-01",
-                   universe: dict[pd.Timestamp, list[str]] | None = None
+                   universe: dict[pd.Timestamp, list[str]] | None = None,
+                   industry: dict[str, str] | None = None
                    ) -> tuple[pd.DataFrame, dict[pd.Timestamp, list[str]]]:
     """回傳每個換股日的目標權重（其餘日期 NaN）與每期持股清單。
 
@@ -74,11 +94,21 @@ def target_weights(close: pd.DataFrame, volume: pd.DataFrame, rev: pd.DataFrame,
             mask &= df["new_high"].fillna(False).astype(bool)
         if p.require_accel:
             mask &= df["accel"] > 0
-        picks = df[mask].nlargest(p.top_n, "yoy3").index.tolist()
+        picks = select(df[mask], p, industry)
 
-        # 每檔固定 1/top_n，選不滿就留現金（不放大單檔部位）
+        # 每檔固定 1/top_n（不放大單檔部位）；選不滿的空位依 p.fill 處理
         weights.loc[d] = 0.0
         weights.loc[d, picks] = 1.0 / p.top_n
+        spare = 1.0 - len(picks) / p.top_n
+        if spare > 0 and p.fill == "ew":
+            pool = (df["vol"] > p.min_avg_volume_lots) & df["tradable"]
+            if universe is not None:
+                pool &= df.index.isin(universe.get(d, []))
+            pool = pool[pool].index.difference(picks)
+            if len(pool):
+                weights.loc[d, pool] += spare / len(pool)
+        elif spare > 0 and p.fill and p.fill in close.columns and close.loc[d, p.fill] > 0:
+            weights.loc[d, p.fill] += spare
         picks_log[d] = picks
     return weights, picks_log
 
