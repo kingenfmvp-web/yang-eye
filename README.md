@@ -18,7 +18,7 @@ data/                  API 快取（重跑不耗額度）
 
 ## 使用
 ```bash
-python3 -m venv .venv && .venv/bin/pip install pandas pyarrow requests matplotlib vectorbt tabulate
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 # 選用：註冊 FinMind 後設定 token，額度 300 → 600 次/小時
 export FINMIND_TOKEN=...
 .venv/bin/python -m yang_eye.universe_pit   # 下載全部候選股並建立時點正確選股池
