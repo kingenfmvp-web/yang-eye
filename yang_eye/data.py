@@ -175,3 +175,21 @@ def load_panel(stock_ids: list[str]) -> tuple[pd.DataFrame, pd.DataFrame, pd.Dat
     volume_df = pd.DataFrame(volume).reindex(close_df.index)
     rev_df = pd.concat(revs, ignore_index=True) if revs else pd.DataFrame()
     return close_df, volume_df, rev_df
+
+
+# ---------- 多因子研究用（皆為免費版逐檔查詢）----------
+
+def per(stock_id: str, start: str = "2010-01-01") -> pd.DataFrame:
+    """每日本益比、股價淨值比、殖利率。ROE ≈ PBR / PER。"""
+    return _cached(f"per/{stock_id}", lambda: _finmind("TaiwanStockPER", stock_id, start))
+
+
+def institutional(stock_id: str, start: str = "2014-01-01") -> pd.DataFrame:
+    """每日三大法人買賣超（股）：外資、投信、自營商。"""
+    return _cached(f"inst/{stock_id}",
+                   lambda: _finmind("TaiwanStockInstitutionalInvestorsBuySell", stock_id, start))
+
+
+def financials(stock_id: str, start: str = "2012-01-01") -> pd.DataFrame:
+    """季度綜合損益表（長表：type/value），date 為季末日。"""
+    return _cached(f"fin/{stock_id}", lambda: _finmind("TaiwanStockFinancialStatements", stock_id, start))
