@@ -59,6 +59,7 @@ def market_study(us: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     ex = set(pd.to_datetime(div["date"]))
     df = pd.DataFrame({"gap": p["open"] / p["close"].shift(1) - 1, "intraday": p["close"] / p["open"] - 1})
     df = df[~df.index.isin(ex)].loc[START:]  # 除息日的跳空是假的，排除
+    df = df[(df["gap"].abs() < 0.08) & (df["intraday"].abs() < 0.11)]  # 排除分割（2025 年 1 拆 4）造成的假跳空
     on = overnight_for(df.index, us)
     corr = pd.DataFrame({c: {"與隔天開盤跳空的相關係數": df["gap"].corr(on[c]),
                              "與隔天開盤→收盤的相關係數": df["intraday"].corr(on[c])} for c in on.columns}).T

@@ -30,6 +30,9 @@
   .yx th { position: sticky; top: 0; background: var(--color-panel); color: var(--color-fg-muted); font-weight: var(--cds-font-weight-medium); }
   .yx th:first-child, .yx td:first-child, .yx th.l, .yx td.l { text-align: left; }
   .yx-pill { display: inline-block; padding: 0 var(--cds-pad-xs); border-radius: var(--cds-radius); font-size: var(--cds-font-size-caption); border: 1px solid var(--color-border-line); }
+  .yx-pre { display: grid; gap: var(--cds-gap-md); grid-template-columns: repeat(auto-fit, minmax(min(100%, 9rem), 1fr)); margin-bottom: var(--cds-gap-sm); }
+  .yx-pre-item { display: grid; gap: 2px; align-content: start; }
+  .yx-mid { font-family: var(--font-anthropic-serif); font-weight: 400; font-size: var(--cds-font-size-heading); }
   .yx-method { display: grid; gap: var(--cds-gap-xs); font-size: var(--cds-font-size-caption); color: var(--color-fg-muted); }
   .yx-method p { margin: 0; max-width: 75ch; }
   [data-dash-source-state=empty] { color: transparent; }
@@ -74,6 +77,19 @@
       <span class="yx-big dash-skeleton" data-source="account" data-field="cash" data-row="0">—</span>
       <span class="yx-sub">持股 <span data-source="account" data-field="holdings_count" data-row="0">—</span> 檔</span>
     </div>
+  </section>
+
+  <section class="yx-card" id="premarket">
+    <h2>盤前參考</h2>
+    <p class="yx-note">前一晚美股收盤（台北凌晨 4–5 點），每個交易日早上 08:10 更新。美股只能預估台股怎麼開盤；回測顯示開盤之後的漲跌和美股無關，所以這裡不影響換股。</p>
+    <div class="yx-pre">
+      <div class="yx-pre-item"><span class="yx-label">費半</span><span class="yx-mid" data-source="premarket" data-field="change" data-where="item=費半">—</span></div>
+      <div class="yx-pre-item"><span class="yx-label">那斯達克</span><span class="yx-mid" data-source="premarket" data-field="change" data-where="item=那斯達克">—</span></div>
+      <div class="yx-pre-item"><span class="yx-label">台積電 ADR</span><span class="yx-mid" data-source="premarket" data-field="change" data-where="item=台積電 ADR">—</span></div>
+      <div class="yx-pre-item yx-pre-est"><span class="yx-label">0050 預估開盤跳空</span><span class="yx-mid" data-source="premarket" data-field="change" data-where="item=0050 預估開盤跳空">—</span>
+        <span class="yx-sub">一般範圍 <span data-source="premarket" data-field="low" data-where="item=0050 預估開盤跳空">—</span> 到 <span data-source="premarket" data-field="high" data-where="item=0050 預估開盤跳空">—</span></span></div>
+    </div>
+    <p class="yx-sub" id="premarket-asof">—</p>
   </section>
 
   <section class="yx-card" id="performance">
@@ -242,8 +258,23 @@
     }
   }
 
+  function fillPremarket() {
+    const pm = dash.data('premarket');
+    const rows = pm.status === 'ok' ? pm.data : [];
+    document.querySelectorAll('[data-source="premarket"]').forEach((el) => {
+      const r = rows.find((x) => 'item=' + x.item === el.dataset.where);
+      const v = r ? r[el.dataset.field] : null;
+      el.textContent = v == null ? '—' : d3.format('+.2%')(v);
+      if (el.classList.contains('yx-mid')) setSign(el, v ?? 0);
+    });
+    const asof = document.getElementById('premarket-asof');
+    const first = rows[0];
+    asof.textContent = first ? `美股 ${first.us_date} 收盤；更新於 ${first.updated_at}` : '—';
+  }
+
   const price = d3.format(',.2f');
   dash.onData(() => {
+    fillPremarket();
     fillAccount();
     fillLatest();
     fillStatus();

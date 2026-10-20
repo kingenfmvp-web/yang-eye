@@ -39,3 +39,14 @@
 `.venv/bin/python -m yang_eye.paper ledger/ --init <起始日>`
 需要本機有回測時下載的 `data/price/` 快取，用來補建倉前 20 天的成交金額快照；
 第一次換股發生在之後的第一次正常執行。
+
+## 盤前參考（排程：台北時間週一至週五 08:10）
+
+1. 準備程式（同上）。
+2. 執行 `.venv/bin/python -m yang_eye.premarket ledger/premarket.json`
+   - 結束碼 3：美股資料還沒更新，20 分鐘後重跑一次；仍失敗就結束並回報。
+3. 用 `ArtifactData get` 讀 `datasets/premarket` 拿 `source.url` 與 `version`；
+   上傳 `premarket.json`（Artifact `publish` + `asset: true`），
+   `update` `datasets/premarket` 的 `source.url`、`source.name`、`updated`（帶 `if_version`），
+   再刪掉舊的 asset。
+4. 回報：程式印出的四行（費半、那斯達克、台積電 ADR、0050 預估開盤跳空）。
