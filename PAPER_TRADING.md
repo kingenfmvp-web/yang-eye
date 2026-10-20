@@ -15,6 +15,8 @@
 
 ## 每個交易日收盤後（排程：台北時間週一至週五 18:40）
 
+證交所 OpenAPI 的全市場行情隔天才發布，所以每晚處理的是**前一個交易日**；引擎一律處理 OpenAPI 上最新的那一天，不會漏日。
+
 1. **準備程式**：repo `kingenfmvp-web/yang-eye` clone 到 `/home/user/yang-eye`，
    `python3 -m venv .venv && .venv/bin/pip install -q -r requirements.txt`。
 2. **下載帳本**：對六個 id 各做一次 `ArtifactData get`（collection `datasets`），
