@@ -1,0 +1,130 @@
+# FinMind
+
+> FinMind is an open-source financial data platform providing 75+ Taiwan market datasets and international market data (US, UK, Europe, Japan) via REST API and Python SDK. Data is updated daily. Datasets cover technical analysis, fundamentals, institutional trading, derivatives, convertible bonds, real-time quotes, exchange rates, interest rates, commodities, and US government bond yields.
+
+## API Overview
+
+- Base URL: `https://api.finmindtrade.com/api/v4`
+- Authentication: Register at finmindtrade.com, get token via login API or website. Pass token as `Authorization: Bearer {token}` header.
+- Rate limit: 300 requests/hour (without token), 600/hour (free registered token); paid plans up to 20,000/hour — see Pricing below.
+- Endpoints:
+  - `POST /login` - Get auth token (params: user_id, password)
+  - `GET /data` - Fetch dataset (params: dataset, data_id, start_date, end_date, token)
+  - `GET /datalist` - List available data_id values for a dataset
+  - `GET /translation` - Get English-Chinese column name mapping for a dataset
+  - Some heavy datasets have dedicated endpoints instead of `/data` — they will return 422 if queried via `/data?dataset=...`. See `llms-full.txt` for the exact endpoint of each dataset. Currently:
+    - `GET /taiwan_stock_trading_daily_report` (params: data_id or securities_trader_id, date) — TaiwanStockTradingDailyReport, single date per request
+    - `GET /taiwan_stock_trading_daily_report_secid_agg` (params: data_id, securities_trader_id, start_date, end_date; data_id and securities_trader_id both required) — TaiwanStockTradingDailyReportSecIdAgg
+  - `GET /storage_objects` (params: dataset, date) — sponsorpro-tier whole-day parquet via signed URL, ignores data_id. Currently supports: TaiwanStockPriceTick, TaiwanStockTradingDailyReport, TaiwanStockWarrantTradingDailyReport, TaiwanStockKBar, TaiwanFuturesTick, TaiwanFuturesKBar, TaiwanOptionTick, TaiwanStockTradingDailyReportSecIdAgg.
+
+## Pricing
+
+All prices in TWD (New Taiwan Dollars). One-time payment, no auto-renewal; the plan falls back to Free when it expires. Buy at the [sponsor page](https://finmindtrade.com/analysis/#/Sponsor/sponsor). Full comparison: [Pricing](https://finmind.github.io/en/Pricing/).
+
+| Plan | Monthly | Yearly | API limit | Datasets | License |
+|---|---|---|---|---|---|
+| Free | NT$0 | NT$0 | 300 req/hour (600 with registered token) | 45 | Non-commercial |
+| Backer | NT$699 | NT$5,499 | 1,600 req/hour | 81 | Non-commercial |
+| Sponsor (recommended) | NT$999 | NT$8,888 | 6,000 req/hour | 97 | Non-commercial |
+| Sponsor Pro | NT$3,330 | NT$29,620 | 20,000 req/hour | 97 + whole-day all-symbol download | Commercial (SaaS / AI / app / internal systems) |
+
+- Each higher plan includes everything in the lower plans. Upgrade anytime by paying the prorated difference (minimum NT$100).
+- Backer adds: all-stocks-by-date queries (no `data_id`), adjusted price, stock tick history, futures/options tick, convertible bonds, price limits, US stock minute K, etc.
+- Sponsor adds: stock minute K, broker branch trading report, real-time stock/futures/options data, active ETF holdings, per-stock margin maintenance ratio, block trades, futures minute K, etc.
+- Sponsor Pro adds: commercial license and whole-day all-symbol download (stock tick, broker branch reports, stock minute K, futures/options tick).
+- All plans: no redistribution of raw data, no mirror APIs, no displaying real-time data directly on public web/app interfaces; attribution "FinMind" required.
+
+## Python SDK
+
+```python
+from FinMind.data import DataLoader
+api = DataLoader()
+api.login_by_token(api_token='your_token')
+df = api.taiwan_stock_daily(stock_id='2330', start_date='2020-01-01')
+```
+
+### Async Batch Query
+
+Use `stock_id_list` with `use_async=True` to query multiple stocks concurrently for faster performance.
+
+```python
+from FinMind.data import DataLoader
+api = DataLoader()
+api.login_by_token(api_token='your_token')
+df = api.taiwan_stock_daily(
+    stock_id_list=['2330', '2317', '2454', '3008'],
+    start_date='2024-01-01',
+    end_date='2024-12-31',
+    use_async=True,
+)
+```
+
+Async batch query is supported by datasets that require `data_id` parameter. Not supported by: info, snapshot, tick, total aggregation, and convertible bond datasets.
+
+## Data Conventions
+
+- Volume units differ by market in the intraday tables: `TaiwanStockPriceTick` and `TaiwanStockKBar` report `volume` in lots (1 lot = 1,000 shares) for TWSE/TPEX stocks, and in shares for emerging-board (興櫃) stocks — both units appear in the same day of data. Daily tables such as `TaiwanStockPrice` report `Trading_Volume` in shares for every market.
+- `TaiwanStockInfo` keeps one row per market a stock has belonged to. A stock that moved from the emerging board to TWSE/TPEX keeps its old `emerging` row, whose `date` is frozen at the day it left. Take the row with the latest `date` per `stock_id` as the current market — filtering on `type == "emerging"` alone also returns already-transferred stocks.
+
+## Documentation
+
+- [Quick Start](https://finmind.github.io/quickstart/): API usage guide with examples in Python and R
+- [Login](https://finmind.github.io/login/): Authentication methods
+- [Update Token](https://finmind.github.io/update_token/): Self-service token reset on the [user info page](https://finmindtrade.com/analysis/#/account/user). Old token is invalidated immediately and all devices are signed out — no need to contact support.
+- [API Usage Count](https://finmind.github.io/api_usage_count/): Check API usage via `GET https://api.web.finmindtrade.com/v2/user_info` (Authorization: Bearer {token}). Returns `user_count` (current usage) and `api_request_limit` (quota). HTTP 402 when quota exceeded.
+
+### Taiwan Market (92 datasets)
+
+- [Taiwan DataList](https://finmind.github.io/tutor/TaiwanMarket/DataList/): Full list of 92 Taiwan datasets
+- [Technical](https://finmind.github.io/tutor/TaiwanMarket/Technical/): TaiwanStockInfo, TaiwanStockPrice, TaiwanStockPriceAdj, TaiwanStockPriceTick, TaiwanStockPER, TaiwanStockKBar, TaiwanStockWeekPrice, TaiwanStockMonthPrice, TaiwanStockDayTrading, TaiwanStockTotalReturnIndex, TaiwanVariousIndicators5Seconds, TaiwanStockTradingDate, etc.
+- [Chip (Institutional)](https://finmind.github.io/tutor/TaiwanMarket/Chip/): TaiwanStockMarginPurchaseShortSale, TaiwanStockInstitutionalInvestorsBuySell, TaiwanStockInstitutionalInvestorsBuySellWide, TaiwanStockShareholding, TaiwanStockHoldingSharesPer, TaiwanStockSecuritiesLending, TaiwanStockTradingDailyReport, TaiwanStockBlockTradingDailyReport, TaiwanStockBlockTrade, TaiwanStockLoanCollateralBalance, TaiwanStockActiveETFInfo, TaiwanStockActiveETFHolding, TaiwanStockActiveETFHoldingChange, TaiwanStockIndustryChainMoneyFlow, TaiwanStockMarginMaintenance, TaiwanStockBrokerDailyConcentration, TaiwanStockGovernmentBankBuySell, etc.
+- [Fundamental](https://finmind.github.io/tutor/TaiwanMarket/Fundamental/): TaiwanStockCashFlowsStatement, TaiwanStockFinancialStatements, TaiwanStockBalanceSheet, TaiwanStockDividend, TaiwanStockDividendResult, TaiwanStockMonthRevenue, TaiwanStockMarketValue, etc.
+- [Derivative](https://finmind.github.io/tutor/TaiwanMarket/Derivative/): TaiwanFuturesDaily, TaiwanFuturesKBar, TaiwanOptionDaily, TaiwanFuturesTick, TaiwanFuturesSpreadTick, TaiwanOptionTick, TaiwanFuturesInstitutionalInvestors, TaiwanOptionInstitutionalInvestors, TaiwanFuturesDealerTradingVolumeDaily, TaiwanOptionDealerTradingVolumeDaily, TaiwanFuturesSpreadTrading, TaiwanOptionVix, TaiwanAssetSwapFixedIncomeDaily, TaiwanAssetSwapOptionDaily, etc.
+- [Real-Time](https://finmind.github.io/tutor/TaiwanMarket/RealTime/): taiwan_stock_tick_snapshot, TaiwanFutOptTickInfo, taiwan_futures_snapshot, taiwan_options_snapshot
+- [Index Codes](https://finmind.github.io/tutor/TaiwanMarket/IndexCodes/): 91 index codes (3-digit data_id) supported by taiwan_stock_tick_snapshot, e.g. 001 = TAIEX, 101 = OTC weighted
+- [Convertible Bond](https://finmind.github.io/tutor/TaiwanMarket/ConvertibleBond/): TaiwanStockConvertibleBondInfo, TaiwanStockConvertibleBondDaily, TaiwanStockConvertibleBondInstitutionalInvestors, TaiwanStockConvertibleBondDailyOverview, TaiwanStockConvertibleBondMonthlyAnalysis, TaiwanStockConvertibleBondPutProvision, TaiwanAssetSwapFixedIncomeDaily, TaiwanAssetSwapOptionDaily
+- [Others](https://finmind.github.io/tutor/TaiwanMarket/Others/): TaiwanStockNews, TaiwanBusinessIndicator, TaiwanStockIndustryChain
+
+### International Markets
+
+- [US Market](https://finmind.github.io/tutor/UnitedStatesMarket/DataList/): USStockInfo, USStockPrice, USStockPriceMinute
+- [UK Market](https://finmind.github.io/tutor/UnitedKingdomMarket/DataList/): UKStockInfo, UKStockPrice
+- [Europe Market](https://finmind.github.io/tutor/EuropeMarket/DataList/): EuropeStockInfo, EuropeStockPrice
+- [Japan Market](https://finmind.github.io/tutor/JapanMarket/DataList/): JapanStockInfo, JapanStockPrice
+
+### Global Economic Data
+
+- [Exchange Rate](https://finmind.github.io/tutor/ExchangeRate/): TaiwanExchangeRate (19 currencies: USD, EUR, JPY, GBP, CNY, HKD, KRW, SGD, AUD, CAD, CHF, NZD, ZAR, SEK, THB, IDR, MYR, PHP, VND)
+- [Interest Rate](https://finmind.github.io/tutor/InterestRate/): InterestRate (12 central banks: FED, ECB, BOJ, BOE, PBOC, RBA, BOC, RBNZ, RBI, CBR, BCB, SNB)
+- [Commodities](https://finmind.github.io/tutor/Materials/): GoldPrice, CrudeOilPrices (Brent, WTI)
+- [US Government Bonds](https://finmind.github.io/tutor/GovernmentBondsYield/): GovernmentBondsYield (1M to 30Y maturities)
+- [CNN Fear & Greed Index](https://finmind.github.io/tutor/Others/): CnnFearGreedIndex
+
+### Analysis Tools
+
+- [Backtesting](https://finmind.github.io/tutor/analysis/Backtesting/): Strategy backtesting framework
+- [K-Line Chart](https://finmind.github.io/tutor/analysis/Kline/): Candlestick chart visualization
+- [Dashboard](https://finmind.github.io/tutor/analysis/CustomerDashboardWebServer/): Custom dashboard web server
+- [Treemap](https://finmind.github.io/tutor/analysis/SnapshotTreemap/): Real-time market treemap
+
+## Full API Reference
+
+- [llms-full.txt](https://finmind.github.io/llms-full.txt): Complete dataset schemas with all parameters, columns, tiers, and code examples
+- [openapi.yaml](https://finmind.github.io/openapi.yaml): OpenAPI 3.1 schema for GPTs, Dify, Coze and other platforms
+
+## Service Status / SLA
+
+- Public status page: [status.finmindtrade.com](https://status.finmindtrade.com) — current API status plus 24-hour and 90-day uptime.
+- Uptime is measured from real API traffic, request by request:
+  - valid requests = successful requests (2xx/3xx) + server-side errors (HTTP 5xx)
+  - uptime % = successful requests ÷ valid requests × 100
+  - the 24-hour, 90-day and month-to-date figures each sum the requests in that window; they are not averages of per-minute or per-day uptime
+  - client errors (4xx), connections closed by the client before a response was delivered, and no-traffic windows are not counted; scheduled maintenance may be excluded
+- Status levels (when the window has traffic): Operational (≥ 99.5%), Elevated Error Rates (95%–99.5%), Partial Outage (80%–95%), Major Outage (< 80%), No data (no traffic).
+- This uptime is the measurement basis for the FinMind enterprise plan SLA.
+
+## Links
+
+- [GitHub](https://github.com/FinMind/FinMind)
+- [Official Website](https://finmindtrade.com/)
+- [API Schema](https://finmindtrade.com/analysis/#/data/document)

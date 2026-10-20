@@ -1,0 +1,358 @@
+<style>
+  .yx { display: grid; gap: var(--cds-gap-lg); font-family: var(--font-anthropic-sans); font-variant-numeric: tabular-nums; }
+  .yx-head { display: grid; gap: var(--cds-gap-xs); }
+  .yx-head h1 { margin: 0; font-family: var(--font-anthropic-serif); font-weight: 400; font-size: var(--cds-font-size-title); text-wrap: balance; }
+  .yx-takeaway { margin: 0; color: var(--color-fg-muted); font-size: var(--cds-font-size-body); max-width: 65ch; }
+  .yx-meta { color: var(--color-fg-muted); font-size: var(--cds-font-size-caption); display: flex; flex-wrap: wrap; gap: var(--cds-gap-xs) var(--cds-gap-md); }
+  .yx-tiles { display: grid; gap: var(--cds-gap-md); grid-template-columns: repeat(auto-fit, minmax(min(100%, 11rem), 1fr)); }
+  .yx-card { background: var(--color-panel); border: 1px solid var(--color-border-line); border-radius: var(--cds-radius); padding: var(--cds-pad-lg); min-width: 0; }
+  .yx-tile { display: grid; gap: var(--cds-gap-xs); align-content: start; }
+  .yx-label { color: var(--color-fg-muted); font-size: var(--cds-font-size-caption); letter-spacing: .02em; }
+  .yx-big { font-family: var(--font-anthropic-serif); font-weight: 400; font-size: var(--cds-font-size-title); line-height: 1.15; }
+  .yx-sub { font-size: var(--cds-font-size-caption); color: var(--color-fg-muted); }
+  .yx-up { color: var(--color-ok); }
+  .yx-down { color: var(--color-bad); }
+  .yx-card h2 { margin: 0 0 var(--cds-gap-xs); font-size: var(--cds-font-size-heading); font-weight: var(--cds-font-weight-medium); }
+  .yx-note { margin: 0 0 var(--cds-gap-md); color: var(--color-fg-muted); font-size: var(--cds-font-size-caption); max-width: 70ch; }
+  .yx-chart { position: relative; min-height: 300px; }
+  .yx-chart svg { display: block; overflow: visible; }
+  .yx-tip { position: absolute; background: var(--cds-surface-popover); border: 1px solid var(--cds-border); border-radius: var(--cds-radius); box-shadow: var(--cds-shadow-popover); padding: var(--cds-pad-xs) var(--cds-pad-sm); font-size: var(--cds-font-size-caption); pointer-events: none; white-space: nowrap; display: grid; gap: 2px; }
+  .yx-tip .d { color: var(--cds-text-secondary); }
+  .yx-tip .r { display: flex; align-items: center; gap: var(--cds-gap-xs); }
+  .yx-sw { width: .6rem; height: .6rem; border-radius: 2px; display: inline-block; }
+  .yx-empty { min-height: 300px; display: flex; align-items: center; justify-content: center; color: var(--color-fg-muted); font-size: var(--cds-font-size-caption); text-align: center; padding: var(--cds-pad-md); }
+  .yx-fail { display: flex; align-items: center; justify-content: center; gap: var(--cds-gap-xs); color: var(--color-fg-muted); font-size: var(--cds-font-size-caption); }
+  .yx-fail::before { content: ""; width: .375rem; height: .375rem; border-radius: 50%; background: var(--color-bad); }
+  .yx-grid2 { display: grid; gap: var(--cds-gap-md); grid-template-columns: repeat(auto-fit, minmax(min(100%, 26rem), 1fr)); }
+  .yx-tablebox { overflow: auto; max-height: 28rem; }
+  .yx table { width: 100%; border-collapse: collapse; font-size: var(--cds-font-size-caption); }
+  .yx th, .yx td { padding: var(--cds-pad-xs) var(--cds-pad-sm); text-align: right; border-bottom: 1px solid var(--color-border-line); white-space: nowrap; }
+  .yx th { position: sticky; top: 0; background: var(--color-panel); color: var(--color-fg-muted); font-weight: var(--cds-font-weight-medium); }
+  .yx th:first-child, .yx td:first-child, .yx th.l, .yx td.l { text-align: left; }
+  .yx-pill { display: inline-block; padding: 0 var(--cds-pad-xs); border-radius: var(--cds-radius); font-size: var(--cds-font-size-caption); border: 1px solid var(--color-border-line); }
+  .yx-method { display: grid; gap: var(--cds-gap-xs); font-size: var(--cds-font-size-caption); color: var(--color-fg-muted); }
+  .yx-method p { margin: 0; max-width: 75ch; }
+  [data-dash-source-state=empty] { color: transparent; }
+  [data-dash-source-state=refreshing] { opacity: .5; transition: opacity var(--cds-dur-slow); }
+  @media (max-width: 40rem) { .yx .hide-narrow { display: none; } }
+</style>
+
+<div class="yx">
+  <header class="yx-head" id="summary">
+    <h1>陽之眼模擬帳戶</h1>
+    <p class="yx-takeaway dash-skeleton" id="takeaway">—</p>
+    <div class="yx-meta">
+      <span>起始日 <b class="yx-plain" data-source="account" data-field="inception" data-row="0">—</b></span>
+      <span>最後更新 <span data-source="account" data-field="last_update" data-row="0">—</span></span>
+      <span>下次換股 <span data-source="account" data-field="next_rebalance" data-row="0">—</span></span>
+    </div>
+  </header>
+
+  <section class="yx-tiles" id="tiles">
+    <div class="yx-card yx-tile" id="tile-nav">
+      <span class="yx-label">帳戶淨值（元）</span>
+      <span class="yx-big dash-skeleton" data-source="account" data-field="nav" data-row="0">—</span>
+      <span class="yx-sub">初始資金 <span data-source="account" data-field="initial_capital" data-row="0">—</span></span>
+    </div>
+    <div class="yx-card yx-tile" id="tile-return">
+      <span class="yx-label">累計報酬（自起始日）</span>
+      <span class="yx-big dash-skeleton" data-source="latest" data-field="cum_return" data-where="portfolio=模擬帳戶">—</span>
+      <span class="yx-sub">含手續費、證交稅，股利再投入</span>
+    </div>
+    <div class="yx-card yx-tile" id="tile-vs-taiex">
+      <span class="yx-label">相對加權報酬指數</span>
+      <span class="yx-big dash-skeleton" data-source="excess" data-field="value" data-where="metric=vs_taiex">—</span>
+      <span class="yx-sub">大盤 <span data-source="latest" data-field="cum_return" data-where="portfolio=加權報酬指數">—</span></span>
+    </div>
+    <div class="yx-card yx-tile" id="tile-vs-ew">
+      <span class="yx-label">相對選股池等權重</span>
+      <span class="yx-big dash-skeleton" data-source="excess" data-field="value" data-where="metric=vs_ew">—</span>
+      <span class="yx-sub">等權重 <span data-source="latest" data-field="cum_return" data-where="portfolio=選股池等權重">—</span></span>
+    </div>
+    <div class="yx-card yx-tile" id="tile-cash">
+      <span class="yx-label">現金（元）</span>
+      <span class="yx-big dash-skeleton" data-source="account" data-field="cash" data-row="0">—</span>
+      <span class="yx-sub">持股 <span data-source="account" data-field="holdings_count" data-row="0">—</span> 檔</span>
+    </div>
+  </section>
+
+  <section class="yx-card" id="performance">
+    <h2>累計報酬走勢</h2>
+    <p class="yx-note">三條線都從起始日的 100 萬元算起。等權重組合是同一個選股池裡所有股票各買一樣多，用來判斷選股有沒有比「全部都買」更好。</p>
+    <div class="yx-chart" id="chart" data-source="nav"></div>
+  </section>
+
+  <section class="yx-grid2">
+    <div class="yx-card" id="holdings-card">
+      <h2>目前持股</h2>
+      <p class="yx-note">每月換股一次；選不滿 10 檔時剩下的錢留在現金。</p>
+      <div class="yx-tablebox">
+        <table id="holdings" data-source="holdings" data-row-key="stock_id">
+          <thead><tr>
+            <th data-field="stock_id">代號</th><th class="l" data-field="name">名稱</th>
+            <th data-field="shares" class="hide-narrow">股數</th><th data-field="last_price">收盤價</th>
+            <th data-field="market_value" class="hide-narrow">市值</th><th data-field="weight">權重</th>
+            <th data-field="pnl" class="hide-narrow">損益</th><th data-field="pnl_pct">報酬率</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="yx-card" id="trades-card">
+      <h2>交易紀錄</h2>
+      <p class="yx-note">以換股日收盤價成交。手續費 0.1425%（每筆最低 20 元），賣出另課證交稅 0.3%。</p>
+      <div class="yx-tablebox">
+        <table id="trades" data-source="trades" data-row-key="date,stock_id,side">
+          <thead><tr>
+            <th data-field="date">日期</th><th data-field="stock_id">代號</th><th class="l" data-field="name">名稱</th>
+            <th class="l" data-field="side">買賣</th><th data-field="shares" class="hide-narrow">股數</th>
+            <th data-field="price">價格</th><th data-field="amount" class="hide-narrow">金額</th><th data-field="fee" class="hide-narrow">手續費</th><th data-field="tax" class="hide-narrow">證交稅</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section class="yx-card yx-method" id="method">
+    <h2>規則與限制</h2>
+    <p>策略：<span data-source="account" data-field="strategy" data-row="0">—</span>。</p>
+    <p>選股池：<span data-source="account" data-field="universe" data-row="0">—</span>。成交金額取自每天收盤後存下的證交所行情快照（目前存有 <span data-source="ledger_status" data-field="value" data-where="metric=snapshot_days">—</span> 個交易日），等權重組合目前 <span data-source="ledger_status" data-field="value" data-where="metric=ew_members">—</span> 檔。</p>
+    <p>這是從起始日往後跑的模擬，換股只用當時已公布的月營收，沒有後見之明。月換股策略至少要跑 6 到 12 個月，結果才有參考價值；前幾個月的輸贏多半是運氣。成交假設為收盤價，未計滑價。研究用途，不構成投資建議。資料來源：FinMind、臺灣證券交易所。</p>
+  </section>
+</div>
+
+<script>
+  const ORDER = ['模擬帳戶', '加權報酬指數', '選股池等權重'];
+  window.yxOrder = ORDER;
+
+  dash.calc('latest', {
+    title: '各組合最新累計報酬',
+    description: '每個組合在最後一個日期的淨值與累計報酬。',
+    inputs: ['nav'],
+    fn: (nav) => {
+      const last = {};
+      for (const r of nav) if (!last[r.portfolio] || r.date > last[r.portfolio].date) last[r.portfolio] = r;
+      return Object.values(last).map((r) => ({ portfolio: r.portfolio, date: r.date, nav: r.nav, cum_return: r.cum_return }));
+    },
+  });
+
+  dash.calc('excess', {
+    title: '模擬帳戶的超額報酬',
+    description: '模擬帳戶累計報酬減去大盤、等權重組合的累計報酬（百分點）。',
+    inputs: ['latest'],
+    fn: (latest) => {
+      const get = (p) => latest.find((r) => r.portfolio === p)?.cum_return;
+      const me = get('模擬帳戶');
+      if (me == null) return [];
+      return [
+        { metric: 'vs_taiex', value: get('加權報酬指數') == null ? null : me - get('加權報酬指數') },
+        { metric: 'vs_ew', value: get('選股池等權重') == null ? null : me - get('選股池等權重') },
+      ];
+    },
+  });
+
+  dash.calc('ledger_status', {
+    title: '帳本狀態',
+    description: '成交金額快照的交易日數，與等權重組合的成分股數。',
+    inputs: ['value_snapshots', 'ew_basket'],
+    fn: (value_snapshots, ew_basket) => [
+      { metric: 'snapshot_days', value: new Set(value_snapshots.map((r) => r.date)).size },
+      { metric: 'ew_members', value: ew_basket.length },
+    ],
+  });
+</script>
+
+<script>
+  const money = d3.format(',.0f');
+  const pct = d3.format('+.1%');
+  const pp = (v) => (v >= 0 ? '+' : '−') + d3.format('.1f')(Math.abs(v) * 100) + ' 個百分點';
+  const setSign = (el, v) => { el.classList.toggle('yx-up', v > 0); el.classList.toggle('yx-down', v < 0); };
+  const unskel = (sel) => document.querySelectorAll(sel).forEach((el) => el.classList.remove('dash-skeleton'));
+
+  function fillAccount() {
+    const a = dash.data('account');
+    document.querySelectorAll('[data-source="account"]').forEach((el) => {
+      if (a.status !== 'ok' || !a.data.length) { el.textContent = '—'; return; }
+      const v = a.data[0][el.dataset.field];
+      if (v == null || v === '') el.textContent = '—';
+      else if (['nav', 'cash', 'initial_capital'].includes(el.dataset.field)) el.textContent = money(v);
+      else el.textContent = String(v);
+    });
+    if (a.status !== 'loading') unskel('[data-source="account"]');
+  }
+
+  function fillLatest() {
+    const l = dash.data('latest');
+    const e = dash.data('excess');
+    const rows = l.status === 'ok' ? l.data : [];
+    document.querySelectorAll('[data-source="latest"]').forEach((el) => {
+      const r = rows.find((x) => x.portfolio === el.dataset.where.split('=')[1]);
+      el.textContent = r ? pct(r.cum_return) : '—';
+      if (el.classList.contains('yx-big') && r) setSign(el, r.cum_return);
+    });
+    document.querySelectorAll('[data-source="excess"]').forEach((el) => {
+      const r = (e.status === 'ok' ? e.data : []).find((x) => 'metric=' + x.metric === el.dataset.where);
+      el.textContent = r && r.value != null ? pp(r.value) : '—';
+      if (r && r.value != null) setSign(el, r.value);
+    });
+    unskel('[data-source="latest"], [data-source="excess"]');
+
+    const t = document.getElementById('takeaway');
+    const get = (p) => rows.find((x) => x.portfolio === p);
+    const me = get('模擬帳戶'), mk = get('加權報酬指數'), ew = get('選股池等權重');
+    if (l.status === 'ok' && me) {
+      const days = d3.timeDay.count(new Date(dash.data('account').data?.[0]?.inception), new Date(me.date));
+      let s = `模擬帳戶累計 ${pct(me.cum_return)}`;
+      if (mk) s += `，大盤 ${pct(mk.cum_return)}`;
+      if (ew) s += `，選股池等權重 ${pct(ew.cum_return)}`;
+      s += `（${days} 天）。`;
+      s += days < 180 ? '還不到半年，輸贏先不要當真。' : (ew && me.cum_return > ew.cum_return ? '目前選股贏過全部都買。' : '目前選股沒有贏過全部都買。');
+      t.textContent = s;
+    } else if (l.status === 'ok') {
+      t.textContent = '帳戶已建立，第一次換股後這裡會顯示績效。';
+    } else {
+      t.textContent = '—';
+    }
+    if (l.status !== 'loading') t.classList.remove('dash-skeleton');
+  }
+
+  function fillStatus() {
+    const s = dash.data('ledger_status');
+    document.querySelectorAll('[data-source="ledger_status"]').forEach((el) => {
+      const r = (s.status === 'ok' ? s.data : []).find((x) => 'metric=' + x.metric === el.dataset.where);
+      el.textContent = r ? d3.format(',')(r.value) : '—';
+    });
+  }
+
+  function fillTable(id, render) {
+    const ds = dash.data(id);
+    const tbody = document.querySelector(`#${id} tbody`);
+    tbody.replaceChildren();
+    if (ds.status !== 'ok') return;
+    for (const row of render(ds.data)) {
+      const tr = document.createElement('tr');
+      for (const cell of row) {
+        const td = document.createElement('td');
+        if (cell.cls) td.className = cell.cls;
+        td.textContent = cell.text;
+        tr.appendChild(td);
+      }
+      tbody.appendChild(tr);
+    }
+  }
+
+  const price = d3.format(',.2f');
+  dash.onData(() => {
+    fillAccount();
+    fillLatest();
+    fillStatus();
+    fillTable('holdings', (rows) => [...rows].sort((a, b) => b.market_value - a.market_value).map((r) => [
+      { text: r.stock_id }, { text: r.name, cls: 'l' }, { text: d3.format(',')(r.shares), cls: 'hide-narrow' },
+      { text: price(r.last_price) }, { text: money(r.market_value), cls: 'hide-narrow' }, { text: d3.format('.1%')(r.weight) },
+      { text: money(r.pnl), cls: 'hide-narrow ' + (r.pnl > 0 ? 'yx-up' : r.pnl < 0 ? 'yx-down' : '') },
+      { text: pct(r.pnl_pct), cls: r.pnl_pct > 0 ? 'yx-up' : r.pnl_pct < 0 ? 'yx-down' : '' },
+    ]));
+    fillTable('trades', (rows) => [...rows].sort((a, b) => (b.date + b.side).localeCompare(a.date + a.side)).map((r) => [
+      { text: r.date }, { text: r.stock_id }, { text: r.name, cls: 'l' }, { text: r.side, cls: 'l' },
+      { text: d3.format(',')(r.shares), cls: 'hide-narrow' }, { text: price(r.price) },
+      { text: money(r.amount), cls: 'hide-narrow' }, { text: money(r.fee), cls: 'hide-narrow' }, { text: money(r.tax), cls: 'hide-narrow' },
+    ]));
+  });
+</script>
+
+<script>
+  dash.onData(() => {
+    const box = document.getElementById('chart');
+    const ds = dash.data('nav');
+    box.replaceChildren();
+    box.classList.toggle('dash-skeleton', ds.status === 'loading');
+    if (ds.status === 'error') {
+      const f = document.createElement('div'); f.className = 'yx-fail yx-empty'; f.textContent = 'Failed to load'; box.appendChild(f); return;
+    }
+    if (ds.status !== 'ok') return;
+    const parse = d3.utcParse('%Y-%m-%d');
+    const order = window.yxOrder;
+    const series = order.map((name, i) => ({
+      name, color: dash.colors[i],
+      points: ds.data.filter((r) => r.portfolio === name).map((r) => ({ date: parse(r.date), v: +r.cum_return })).sort((a, b) => a.date - b.date),
+    })).filter((s) => s.points.length);
+    if (!series.length) {
+      const e = document.createElement('div'); e.className = 'yx-empty'; e.textContent = '帳戶建立後，每天收盤更新一次走勢。'; box.appendChild(e); return;
+    }
+
+    const width = box.clientWidth || 600;
+    const height = 300;
+    const fmt = d3.format('+.0%');
+    const svg = d3.select(box).append('svg').attr('width', '100%').attr('viewBox', `0 0 ${width} ${height}`).attr('height', height);
+    const all = series.flatMap((s) => s.points);
+    const ext = d3.extent(all, (p) => p.v);
+    const y = d3.scaleLinear([Math.min(0, ext[0]), Math.max(0, ext[1])], [height - 28, 12]).nice();
+    const xDom = d3.extent(all, (p) => p.date);
+    if (+xDom[0] === +xDom[1]) xDom[1] = d3.utcDay.offset(xDom[0], 1);
+
+    // 量測最寬的刻度與端點標籤，決定邊界
+    const measure = (text) => { const t = svg.append('text').attr('font-size', 12).text(text); const w = t.node().getComputedTextLength(); t.remove(); return w; };
+    const yTicks = y.ticks(5);
+    const left = Math.max(...yTicks.map((v) => measure(fmt(v)))) + 10;
+    const endLabel = (s) => `${s.name} ${d3.format('+.1%')(s.points.at(-1).v)}`;
+    const right = Math.min(width * 0.4, Math.max(...series.map((s) => measure(endLabel(s)))) + 14);
+    const x = d3.scaleUtc(xDom, [left, width - right]);
+
+    svg.append('g').selectAll('line').data(yTicks).join('line')
+      .attr('x1', left).attr('x2', width - right).attr('y1', (v) => y(v)).attr('y2', (v) => y(v))
+      .attr('stroke', (v) => (v === 0 ? 'var(--cds-chart-reference)' : 'var(--cds-chart-grid)')).attr('stroke-width', 1);
+    svg.append('g').selectAll('text').data(yTicks).join('text')
+      .attr('x', left - 8).attr('y', (v) => y(v)).attr('dy', '0.32em').attr('text-anchor', 'end')
+      .attr('font-size', 12).attr('fill', 'var(--color-fg-muted)').text((v) => fmt(v));
+    const xTicks = x.ticks(Math.max(2, Math.floor((width - left - right) / 90)));
+    svg.append('g').selectAll('text').data(xTicks).join('text')
+      .attr('x', (d) => x(d)).attr('y', height - 6).attr('text-anchor', 'middle')
+      .attr('font-size', 12).attr('fill', 'var(--color-fg-muted)').text(d3.utcFormat('%-m/%-d'));
+
+    const line = d3.line().x((p) => x(p.date)).y((p) => y(p.v));
+    for (const s of series) {
+      svg.append('path').attr('d', line(s.points)).attr('fill', 'none').attr('stroke', s.color)
+        .attr('stroke-width', 2).attr('stroke-linecap', 'round').attr('stroke-linejoin', 'round');
+      const last = s.points.at(-1);
+      svg.append('circle').attr('cx', x(last.date)).attr('cy', y(last.v)).attr('r', 4).attr('fill', s.color)
+        .attr('stroke', 'var(--color-panel)').attr('stroke-width', 2);
+    }
+    // 端點標籤，彼此至少相隔 16px
+    const labels = series.map((s) => ({ s, y: y(s.points.at(-1).v) })).sort((a, b) => a.y - b.y);
+    for (let i = 1; i < labels.length; i++) labels[i].y = Math.max(labels[i].y, labels[i - 1].y + 16);
+    for (const l of labels) {
+      svg.append('text').attr('x', width - right + 8).attr('y', l.y).attr('dy', '0.32em').attr('font-size', 12)
+        .attr('fill', 'var(--color-fg)').text(endLabel(l.s));
+    }
+
+    // 滑鼠提示
+    const tip = document.createElement('div'); tip.className = 'yx-tip'; tip.hidden = true; box.appendChild(tip);
+    const rule = svg.append('line').attr('y1', 12).attr('y2', height - 28).attr('stroke', 'var(--cds-chart-axis)').attr('visibility', 'hidden');
+    const dates = [...new Set(all.map((p) => +p.date))].sort((a, b) => a - b).map((t) => new Date(t));
+    svg.append('rect').attr('x', left).attr('y', 0).attr('width', Math.max(0, width - left - right)).attr('height', height)
+      .attr('fill', 'transparent')
+      .on('pointermove', (event) => {
+        const [mx] = d3.pointer(event);
+        const scale = box.clientWidth / width;
+        const d = dates[Math.max(0, Math.min(dates.length - 1, d3.bisectCenter(dates.map(Number), +x.invert(mx))))];
+        rule.attr('x1', x(d)).attr('x2', x(d)).attr('visibility', 'visible');
+        tip.replaceChildren();
+        const head = document.createElement('div'); head.className = 'd'; head.textContent = d3.utcFormat('%Y-%m-%d')(d); tip.appendChild(head);
+        for (const s of series) {
+          const p = s.points.find((q) => +q.date === +d);
+          if (!p) continue;
+          const r = document.createElement('div'); r.className = 'r';
+          const sw = document.createElement('span'); sw.className = 'yx-sw'; sw.style.background = s.color;
+          const t = document.createElement('span'); t.textContent = `${s.name} ${d3.format('+.2%')(p.v)}`;
+          r.append(sw, t); tip.appendChild(r);
+        }
+        tip.hidden = false;
+        const tx = x(d) * scale;
+        const w = tip.offsetWidth;
+        tip.style.left = Math.max(0, Math.min(box.clientWidth - w, tx + 12 > box.clientWidth - w ? tx - w - 12 : tx + 12)) + 'px';
+        tip.style.top = '8px';
+      })
+      .on('pointerleave', () => { tip.hidden = true; rule.attr('visibility', 'hidden'); });
+  });
+</script>
