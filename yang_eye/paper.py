@@ -42,8 +42,11 @@ PORTFOLIOS = ("模擬帳戶", "選股池等權重", "加權報酬指數")
 # v0.3：同產業最多 3 檔；選不滿的空位補 0050（回測的敏感度 B）。
 # 回測主方案是補選股池等權重，但 100 萬的帳戶分到上百檔時每筆只有幾千元，最低手續費 20 元會吃掉 1% 以上，所以模擬帳戶改補 0050。
 PARAMS = replace(RevenueMomentumParams(), max_per_industry=3, fill="0050")
-STRATEGY_TEXT = (f"營收動能 v0.3：3月YoY>{PARAMS.min_yoy3:.0%}、12月新高、YoY加速、均量>{PARAMS.min_avg_volume_lots:.0f}張，"
-                 f"取前{PARAMS.top_n}檔各{1 / PARAMS.top_n:.0%}，同產業最多{PARAMS.max_per_industry}檔，選不滿的空位買 {PARAMS.fill}")
+# 核心衛星：每次換股把資金調回 CORE_WEIGHT 放 0050（核心），其餘照 v0.3 選股（衛星）
+CORE_WEIGHT = 0.5
+STRATEGY_TEXT = (f"核心衛星：{CORE_WEIGHT:.0%} 0050 ＋ {1 - CORE_WEIGHT:.0%} 營收動能 v0.3（3月YoY>{PARAMS.min_yoy3:.0%}、12月新高、YoY加速、"
+                 f"均量>{PARAMS.min_avg_volume_lots:.0f}張，取前{PARAMS.top_n}檔各占衛星{1 / PARAMS.top_n:.0%}，同產業最多{PARAMS.max_per_industry}檔，"
+                 f"選不滿的空位也買 {PARAMS.fill}）；每月換股時調回比例")
 
 
 # ---------- 帳本讀寫 ----------
@@ -180,19 +183,19 @@ def fee(amount: float) -> int:
 
 
 def rebalance(acct: dict, holdings: list[dict], prices: dict[str, float], names: dict[str, str],
-              picks: list[str], today: str, top_n: int, fill: str | None = None
-              ) -> tuple[list[dict], list[dict]]:
+              picks: list[str], today: str, top_n: int, fill: str | None = None,
+              core: float = 0.0) -> tuple[list[dict], list[dict]]:
     """以收盤價換股：先賣不在名單的、調整留下的，再買新的；股數取整數（含零股）。
 
-    每檔目標 1/top_n；選不滿時，空出的比例買 fill（例如 0050）。
+    core 比例放 fill（核心）；其餘為衛星，每檔目標 衛星/top_n，選不滿的空位也買 fill。
     """
     trades, pos = [], {h["stock_id"]: dict(h) for h in holdings}
     nav = acct["cash"] + sum(h["shares"] * prices.get(s, h["last_price"]) for s, h in pos.items())
-    target_value = nav / top_n
+    target_value = nav * (1 - core) / top_n
     targets = {s: int(target_value // prices[s]) for s in picks if prices.get(s, 0) > 0}
-    spare = 1 - len(targets) / top_n
-    if fill and spare > 0 and prices.get(fill, 0) > 0:
-        targets[fill] = int(nav * spare // prices[fill])
+    fill_share = core + (1 - core) * (1 - len(targets) / top_n)
+    if fill and fill_share > 0 and prices.get(fill, 0) > 0:
+        targets[fill] = int(nav * fill_share // prices[fill])
 
     def trade(sid, shares, side):
         price = prices.get(sid, pos.get(sid, {}).get("last_price", 0))
@@ -330,7 +333,7 @@ def step(ledger: dict[str, list[dict]], snap: pd.DataFrame, log=print) -> dict[s
             picks = pick(members, lots, rev, today, p, universe_pit.industries())
             log(f"{today} 換股：選股池 {len(members)} 檔，選出 {len(picks)} 檔 {picks}")
             ledger["holdings"], trades = rebalance(acct, ledger["holdings"], prices, names,
-                                                   picks, today, p.top_n, p.fill)
+                                                   picks, today, p.top_n, p.fill, CORE_WEIGHT)
             ledger["trades"] += trades
             # 等權重對照組：同樣的流動性門檻，換股成本以每邊 0.2925% 估計
             eligible = [s for s in members if lots.get(s, 0) > p.min_avg_volume_lots and s in prices]
