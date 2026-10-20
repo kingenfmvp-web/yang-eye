@@ -23,6 +23,8 @@ class RevenueMomentumParams:
     regime_ma: int | None = None  # v0.4：大盤低於 N 日均線時降低持股（None＝不用濾網）
     regime_exposure: float = 0.5  # v0.4：濾網觸發時的總持股比例
     regime_daily: bool = False  # v0.4：True＝每天檢查，大盤一穿越均線就調整；False＝只在換股日檢查
+    trailing_stop: float | None = None  # v0.5：選出的股票從買進後最高收盤回落此比例，隔天收盤賣出，資金留現金到下次換股
+    max_ret60: float | None = None  # v0.5：選股時排除近 60 日漲幅超過此比例的過熱股
 
 
 def market_exposure(market: pd.Series, p: RevenueMomentumParams) -> pd.Series:
@@ -105,6 +107,10 @@ def target_weights(close: pd.DataFrame, volume: pd.DataFrame, rev: pd.DataFrame,
             mask &= df["new_high"].fillna(False).astype(bool)
         if p.require_accel:
             mask &= df["accel"] > 0
+        if p.max_ret60 is not None:
+            i = close.index.get_loc(d)
+            ret60 = close.iloc[i] / close.iloc[max(0, i - 60)] - 1
+            mask &= ~(ret60 > p.max_ret60)
         picks = select(df[mask], p, industry)
 
         # 每檔固定 1/top_n（不放大單檔部位）；選不滿的空位依 p.fill 處理
@@ -122,6 +128,9 @@ def target_weights(close: pd.DataFrame, volume: pd.DataFrame, rev: pd.DataFrame,
             weights.loc[d, p.fill] += spare
         picks_log[d] = picks
 
+    if p.trailing_stop:
+        weights = apply_trailing_stop(weights, picks_log, close, p.trailing_stop)
+
     if p.regime_ma and market is not None:
         expo = market_exposure(market, p).reindex(close.index).ffill().fillna(1.0)
         base = weights.ffill()  # 最近一次換股的目標權重
@@ -130,6 +139,30 @@ def target_weights(close: pd.DataFrame, volume: pd.DataFrame, rev: pd.DataFrame,
             weights.loc[flips] = base.loc[flips]
         weights = weights.mul(expo, axis=0)
     return weights, picks_log
+
+
+def apply_trailing_stop(weights: pd.DataFrame, picks_log: dict[pd.Timestamp, list[str]],
+                        close: pd.DataFrame, pct: float) -> pd.DataFrame:
+    """在換股日之間加入停損單：只有被停損的那一欄有值（0），其他欄 NaN 代表不動。
+
+    最高價從連續持有的第一天算起；用前一天收盤判斷，當天收盤賣出，避免偷看。
+    """
+    weights = weights.copy()
+    dates = sorted(picks_log)
+    entry: dict[str, pd.Timestamp] = {}
+    for k, d in enumerate(dates):
+        end = dates[k + 1] if k + 1 < len(dates) else close.index[-1] + pd.Timedelta(days=1)
+        entry = {s: entry.get(s, d) for s in picks_log[d]}  # 續抱的股票沿用原本的買進日
+        period = close.index[(close.index > d) & (close.index < end)]
+        for s in picks_log[d]:
+            px = close[s].ffill()
+            peak = px.loc[entry[s]:].cummax()
+            dd = (px / peak - 1).shift(1).reindex(period)
+            hit = dd[dd <= -pct]
+            if len(hit):
+                weights.loc[hit.index[0], s] = 0.0
+                entry.pop(s, None)  # 停損後下次換股若再選到，重新起算
+    return weights
 
 
 def equal_weight_universe(close: pd.DataFrame, volume: pd.DataFrame, weights: pd.DataFrame,

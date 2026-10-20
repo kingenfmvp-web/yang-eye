@@ -39,10 +39,12 @@ def run_simple(close: pd.DataFrame, weights: pd.DataFrame) -> pd.Series:
         total = grown.sum() + cash
         cur = grown / total
         r = total - 1
-        if is_reb[i]:
-            t = np.nan_to_num(target[i])
-            r -= np.abs(t - cur).sum() * FEE_PER_SIDE * (1 + r)
-            cur = t
+        if is_reb[i]:  # NaN 的欄位不動（停損單只調整單一欄）
+            mask = ~np.isnan(target[i])
+            new = cur.copy()
+            new[mask] = target[i][mask]
+            r -= np.abs(new - cur).sum() * FEE_PER_SIDE * (1 + r)
+            cur = new
         out[i] = r
     port_ret = pd.Series(out, index=weights.index)
     start = weights.dropna(how="all").index[0]
