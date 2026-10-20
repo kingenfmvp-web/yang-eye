@@ -23,7 +23,10 @@ import pandas as pd
 import requests
 
 from yang_eye import data
-from yang_eye.strategy import RevenueMomentumParams, revenue_signals
+from dataclasses import replace
+
+from yang_eye import universe_pit
+from yang_eye.strategy import RevenueMomentumParams, revenue_signals, select
 from yang_eye.universe_pit import is_common_stock
 
 INITIAL_CAPITAL = 1_000_000
@@ -36,6 +39,11 @@ SNAPSHOT_DAYS = 30
 TZ = timezone(timedelta(hours=8))
 FILES = ["account", "nav", "holdings", "trades", "ew_basket", "value_snapshots"]
 PORTFOLIOS = ("模擬帳戶", "選股池等權重", "加權報酬指數")
+# v0.3：同產業最多 3 檔；選不滿的空位補 0050（回測的敏感度 B）。
+# 回測主方案是補選股池等權重，但 100 萬的帳戶分到上百檔時每筆只有幾千元，最低手續費 20 元會吃掉 1% 以上，所以模擬帳戶改補 0050。
+PARAMS = replace(RevenueMomentumParams(), max_per_industry=3, fill="0050")
+STRATEGY_TEXT = (f"營收動能 v0.3：3月YoY>{PARAMS.min_yoy3:.0%}、12月新高、YoY加速、均量>{PARAMS.min_avg_volume_lots:.0f}張，"
+                 f"取前{PARAMS.top_n}檔各{1 / PARAMS.top_n:.0%}，同產業最多{PARAMS.max_per_industry}檔，選不滿的空位買 {PARAMS.fill}")
 
 
 # ---------- 帳本讀寫 ----------
@@ -52,12 +60,12 @@ def save(folder: Path, ledger: dict[str, list[dict]]) -> None:
 
 
 def init_ledger(start: str) -> dict[str, list[dict]]:
-    p = RevenueMomentumParams()
+    p = PARAMS
     account = {"inception": start, "initial_capital": INITIAL_CAPITAL, "cash": INITIAL_CAPITAL,
                "nav": INITIAL_CAPITAL, "ew_nav": INITIAL_CAPITAL, "taiex_base": None,
                "last_update": None, "last_rebalance": None, "next_rebalance": None,
                "holdings_count": 0,
-               "strategy": f"營收動能 v0.2：3月YoY>{p.min_yoy3:.0%}、12月新高、YoY加速、均量>{p.min_avg_volume_lots:.0f}張，取前{p.top_n}檔各{1 / p.top_n:.0%}",
+               "strategy": STRATEGY_TEXT,
                "universe": f"上市普通股近 20 日成交金額前 {TOP_N_UNIVERSE} 名，上市滿 6 個月"}
     return {"account": [account], "nav": [], "holdings": [], "trades": [], "ew_basket": [],
             "value_snapshots": seed_snapshots(start)}
@@ -172,12 +180,19 @@ def fee(amount: float) -> int:
 
 
 def rebalance(acct: dict, holdings: list[dict], prices: dict[str, float], names: dict[str, str],
-              picks: list[str], today: str, top_n: int) -> tuple[list[dict], list[dict]]:
-    """以收盤價換股：先賣不在名單的、調整留下的，再買新的；股數取整數（含零股）。"""
+              picks: list[str], today: str, top_n: int, fill: str | None = None
+              ) -> tuple[list[dict], list[dict]]:
+    """以收盤價換股：先賣不在名單的、調整留下的，再買新的；股數取整數（含零股）。
+
+    每檔目標 1/top_n；選不滿時，空出的比例買 fill（例如 0050）。
+    """
     trades, pos = [], {h["stock_id"]: dict(h) for h in holdings}
     nav = acct["cash"] + sum(h["shares"] * prices.get(s, h["last_price"]) for s, h in pos.items())
     target_value = nav / top_n
     targets = {s: int(target_value // prices[s]) for s in picks if prices.get(s, 0) > 0}
+    spare = 1 - len(targets) / top_n
+    if fill and spare > 0 and prices.get(fill, 0) > 0:
+        targets[fill] = int(nav * spare // prices[fill])
 
     def trade(sid, shares, side):
         price = prices.get(sid, pos.get(sid, {}).get("last_price", 0))
@@ -229,7 +244,7 @@ def universe(snapshots: list[dict], listed: dict[str, str], today: str) -> tuple
 
 
 def pick(members: list[str], avg_lots: dict[str, float], rev: pd.DataFrame, today: str,
-         p: RevenueMomentumParams) -> list[str]:
+         p: RevenueMomentumParams, industry: dict[str, str] | None = None) -> list[str]:
     sig = revenue_signals(rev)
     period = pd.Timestamp(today).to_period("M") - 1
     if period not in sig["yoy3"].index:
@@ -241,7 +256,7 @@ def pick(members: list[str], avg_lots: dict[str, float], rev: pd.DataFrame, toda
         mask &= df["new_high"].fillna(False).astype(bool)
     if p.require_accel:
         mask &= df["accel"] > 0
-    return df[mask].nlargest(p.top_n, "yoy3").index.tolist()
+    return select(df[mask], p, industry)
 
 
 def is_rebalance_day(today: str, last_rebalance: str | None) -> bool:
@@ -297,7 +312,7 @@ def step(ledger: dict[str, list[dict]], snap: pd.DataFrame, log=print) -> dict[s
     # 3. 換股
     trades = []
     if is_rebalance_day(today, acct["last_rebalance"]):
-        p = RevenueMomentumParams()
+        p = PARAMS
         members, lots = universe(ledger["value_snapshots"], listing_dates(), today)
         if len(members) < TOP_N_UNIVERSE // 2:
             log(f"成交金額快照不足（{len(members)} 檔），本月先不換股")
@@ -308,10 +323,10 @@ def step(ledger: dict[str, list[dict]], snap: pd.DataFrame, log=print) -> dict[s
                 for b in ledger["ew_basket"]:
                     b["units"] *= fs.get(b["stock_id"], 1.0)
             rev = fresh_revenue(members, today)
-            picks = pick(members, lots, rev, today, p)
+            picks = pick(members, lots, rev, today, p, universe_pit.industries())
             log(f"{today} 換股：選股池 {len(members)} 檔，選出 {len(picks)} 檔 {picks}")
             ledger["holdings"], trades = rebalance(acct, ledger["holdings"], prices, names,
-                                                   picks, today, p.top_n)
+                                                   picks, today, p.top_n, p.fill)
             ledger["trades"] += trades
             # 等權重對照組：同樣的流動性門檻，換股成本以每邊 0.2925% 估計
             eligible = [s for s in members if lots.get(s, 0) > p.min_avg_volume_lots and s in prices]
@@ -350,7 +365,7 @@ def step(ledger: dict[str, list[dict]], snap: pd.DataFrame, log=print) -> dict[s
         ledger["nav"].append({"date": today, "portfolio": name, "nav": round(v),
                               "cum_return": v / INITIAL_CAPITAL - 1})
 
-    acct.update({"nav": round(nav), "ew_nav": round(ew_nav), "cash": round(acct["cash"]),
+    acct.update({"strategy": STRATEGY_TEXT, "nav": round(nav), "ew_nav": round(ew_nav), "cash": round(acct["cash"]),
                  "last_update": today, "holdings_count": len(ledger["holdings"]),
                  "next_rebalance": next_rebalance_after(today),
                  "updated_at": datetime.now(TZ).strftime("%Y-%m-%d %H:%M")})
