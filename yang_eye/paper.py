@@ -1,7 +1,8 @@
 """陽之眼模擬帳戶（前瞻紙上交易）引擎。
 
 帳本存在儀表板裡，這支程式只處理本地的 JSON 帳本檔：
-    python -m yang_eye.paper <帳本資料夾> [--init] [--date YYYY-MM-DD]
+    python -m yang_eye.paper <帳本資料夾>                  每日更新（資料未更新時結束碼 3）
+    python -m yang_eye.paper <帳本資料夾> --init YYYY-MM-DD  建立新帳本
 流程：從儀表板下載帳本 → 執行本程式 → 把改過的檔案傳回儀表板。
 
 每天收盤後執行一次：
@@ -46,7 +47,7 @@ def load(folder: Path) -> dict[str, list[dict]]:
 def save(folder: Path, ledger: dict[str, list[dict]]) -> None:
     folder.mkdir(parents=True, exist_ok=True)
     for k in FILES:
-        (folder / f"{k}.json").write_text(json.dumps(ledger[k], ensure_ascii=False, indent=1),
+        (folder / f"{k}.json").write_text(json.dumps(ledger[k], ensure_ascii=False, separators=(",", ":")),
                                           encoding="utf-8")
 
 
@@ -259,12 +260,21 @@ def next_rebalance_after(today: str) -> str:
 
 # ---------- 每日一步 ----------
 
+class DataNotReady(RuntimeError):
+    pass
+
+
 def step(ledger: dict[str, list[dict]], snap: pd.DataFrame, log=print) -> dict[str, list[dict]]:
     acct = ledger["account"][0]
     today = snap["date"].iloc[0]
     if acct["last_update"] and today <= acct["last_update"]:
         log(f"{today} 已經更新過，略過")
         return ledger
+    if today < acct["inception"]:
+        raise DataNotReady(f"證交所行情還停在 {today}，起始日 {acct['inception']} 的資料尚未發布")
+    tr = taiex_tr(today)
+    if tr is None:
+        raise DataNotReady(f"FinMind 還沒有 {today} 的加權報酬指數，晚點再跑")
     prices = dict(zip(snap["stock_id"], snap["close"].where(snap["close"] > 0)))
     prices = {k: v for k, v in prices.items() if pd.notna(v)}
     names = dict(zip(snap["stock_id"], snap["name"]))
@@ -331,14 +341,9 @@ def step(ledger: dict[str, list[dict]], snap: pd.DataFrame, log=print) -> dict[s
         b["last_price"] = prices.get(b["stock_id"], b["last_price"])
     ew_nav = sum(b["units"] * b["last_price"] for b in ledger["ew_basket"]) or acct["ew_nav"]
 
-    tr = taiex_tr(today)
-    if tr is None:
-        log(f"FinMind 還沒有 {today} 的加權報酬指數，這一天的大盤沿用前值")
-    if acct["taiex_base"] is None and tr is not None:
+    if acct["taiex_base"] is None:
         acct["taiex_base"] = tr
-    prev_taiex = next((r["nav"] for r in reversed(ledger["nav"]) if r["portfolio"] == PORTFOLIOS[2]),
-                      INITIAL_CAPITAL)
-    taiex_nav = INITIAL_CAPITAL * tr / acct["taiex_base"] if tr else prev_taiex
+    taiex_nav = INITIAL_CAPITAL * tr / acct["taiex_base"]
 
     ledger["nav"] = [r for r in ledger["nav"] if r["date"] != today]
     for name, v in zip(PORTFOLIOS, (nav, ew_nav, taiex_nav)):
@@ -359,12 +364,16 @@ def main() -> None:
     ap.add_argument("folder", type=Path)
     ap.add_argument("--init", metavar="START", help="建立新帳本（起始日 YYYY-MM-DD）")
     args = ap.parse_args()
-    if args.init:
-        ledger = init_ledger(args.init)
-    else:
-        ledger = load(args.folder)
-    snap = market_snapshot()
-    ledger = step(ledger, snap)
+    if args.init:  # 只建立帳本（現金＋成交金額快照），第一次換股在下一次正常執行時發生
+        save(args.folder, init_ledger(args.init))
+        print(f"已建立帳本，起始日 {args.init}")
+        return
+    ledger = load(args.folder)
+    try:
+        ledger = step(ledger, market_snapshot())
+    except DataNotReady as e:
+        print(f"資料尚未更新：{e}")
+        raise SystemExit(3)
     save(args.folder, ledger)
 
 
