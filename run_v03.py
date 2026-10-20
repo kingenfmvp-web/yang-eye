@@ -20,6 +20,7 @@ VARIANTS = {
     "敏感度A（產業≤2檔＋補等權重）": replace(BASE, max_per_industry=2, fill="ew"),
     "敏感度B（產業≤3檔＋補0050）": replace(BASE, max_per_industry=3, fill="0050"),
 }
+TITLE = "陽之眼 v0.3｜產業上限＋空位補滿 vs v0.2（時點正確選股池，已扣成本）"
 COLORS = {"v0.2 原版": "#2a78d6", "v0.3 主方案（產業≤3檔＋補等權重）": "#eb6834", "加權報酬指數": "#1baf7a"}
 
 
@@ -55,7 +56,7 @@ def plot(values: dict[str, pd.Series], path) -> None:
         last = ty
     ax1.set_yscale("log")
     ax1.set_ylabel("淨值（起始=1，對數刻度）", color="#52514e")
-    ax1.set_title("陽之眼 v0.3｜產業上限＋空位補滿 vs v0.2（時點正確選股池，已扣成本）", loc="left", fontsize=13)
+    ax1.set_title(TITLE, loc="left", fontsize=13)
     ax1.legend(loc="upper left", frameon=False)
     ax2.set_ylabel("回撤 %", color="#52514e")
     for ax in (ax1, ax2):

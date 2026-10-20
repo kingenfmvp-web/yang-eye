@@ -20,6 +20,16 @@ class RevenueMomentumParams:
     rebalance_day: int = 11
     max_per_industry: int | None = None  # v0.3：同產業最多幾檔（None＝不限）
     fill: str | None = None  # v0.3：選不滿時空位怎麼放："ew"＝選股池等權重、ETF 代號（如 "0050"）、None＝留現金
+    regime_ma: int | None = None  # v0.4：大盤低於 N 日均線時降低持股（None＝不用濾網）
+    regime_exposure: float = 0.5  # v0.4：濾網觸發時的總持股比例
+    regime_daily: bool = False  # v0.4：True＝每天檢查，大盤一穿越均線就調整；False＝只在換股日檢查
+
+
+def market_exposure(market: pd.Series, p: RevenueMomentumParams) -> pd.Series:
+    """每天的目標總持股比例；用前一天的收盤判斷，避免偷看當天。"""
+    ma = market.rolling(p.regime_ma, min_periods=p.regime_ma).mean()
+    below = (market < ma).shift(1).fillna(False).astype(bool)
+    return below.map({True: p.regime_exposure, False: 1.0})
 
 
 def revenue_signals(rev: pd.DataFrame) -> dict[str, pd.DataFrame]:
@@ -65,7 +75,8 @@ def select(df: pd.DataFrame, p: RevenueMomentumParams, industry: dict[str, str] 
 def target_weights(close: pd.DataFrame, volume: pd.DataFrame, rev: pd.DataFrame,
                    p: RevenueMomentumParams, start: str = "2015-01-01",
                    universe: dict[pd.Timestamp, list[str]] | None = None,
-                   industry: dict[str, str] | None = None
+                   industry: dict[str, str] | None = None,
+                   market: pd.Series | None = None
                    ) -> tuple[pd.DataFrame, dict[pd.Timestamp, list[str]]]:
     """回傳每個換股日的目標權重（其餘日期 NaN）與每期持股清單。
 
@@ -110,6 +121,14 @@ def target_weights(close: pd.DataFrame, volume: pd.DataFrame, rev: pd.DataFrame,
         elif spare > 0 and p.fill and p.fill in close.columns and close.loc[d, p.fill] > 0:
             weights.loc[d, p.fill] += spare
         picks_log[d] = picks
+
+    if p.regime_ma and market is not None:
+        expo = market_exposure(market, p).reindex(close.index).ffill().fillna(1.0)
+        base = weights.ffill()  # 最近一次換股的目標權重
+        if p.regime_daily:  # 換股日之外，曝險變動的那天也調整一次
+            flips = expo.ne(expo.shift(1)) & base.notna().any(axis=1)
+            weights.loc[flips] = base.loc[flips]
+        weights = weights.mul(expo, axis=0)
     return weights, picks_log
 
 
