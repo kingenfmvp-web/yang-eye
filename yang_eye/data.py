@@ -33,8 +33,12 @@ def _finmind(dataset: str, data_id: str | None = None, start_date: str | None = 
     headers = {}
     if token := os.environ.get("FINMIND_TOKEN"):
         headers["Authorization"] = f"Bearer {token}"
-    for attempt in range(4):
-        r = requests.get(FINMIND_URL, params=params, headers=headers, timeout=60)
+    for attempt in range(6):
+        try:
+            r = requests.get(FINMIND_URL, params=params, headers=headers, timeout=60)
+        except requests.RequestException:  # 連線被切斷或逾時：等一下再試
+            time.sleep(10 * 2 ** attempt)
+            continue
         if r.status_code == 402 or (r.status_code != 200 and "limit" in r.text.lower()):
             raise QuotaExceeded(f"FinMind 額度用完（{dataset} {data_id}），稍後重跑即可從快取續抓")
         if r.status_code == 200:
@@ -42,7 +46,8 @@ def _finmind(dataset: str, data_id: str | None = None, start_date: str | None = 
             if body.get("status") == 200:
                 return pd.DataFrame(body["data"])
         time.sleep(2 ** attempt)
-    raise RuntimeError(f"FinMind 失敗 {dataset} {data_id}: {r.status_code} {r.text[:200]}")
+    detail = f"{r.status_code} {r.text[:200]}" if "r" in locals() else "連線失敗"
+    raise RuntimeError(f"FinMind 失敗 {dataset} {data_id}: {detail}")
 
 
 def _cached(name: str, fetch) -> pd.DataFrame:

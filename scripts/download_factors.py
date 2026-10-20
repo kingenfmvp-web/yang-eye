@@ -31,6 +31,9 @@ def run(stock_ids, fetch, label):
         except data.QuotaExceeded:
             print(f"{datetime.now(TZ):%H:%M} 額度用完，等 10 分鐘", flush=True)
             time.sleep(600)
+        except Exception as e:  # 單一檔一直失敗就跳過，不要讓整個下載停掉
+            print(f"{datetime.now(TZ):%H:%M} {label} {stock_ids[i]} 失敗，跳過：{e}", flush=True)
+            i += 1
 
 
 if __name__ == "__main__":
