@@ -29,13 +29,17 @@ def _reference() -> tuple[pd.DataFrame, pd.DataFrame]:
     return info, delist
 
 
-def candidates(since: str = "2014-06-01") -> list[str]:
+def candidates(since: str = "2014-06-01", market: str = "twse") -> list[str]:
+    """market＝"twse"（上市）或 "tpex"（上櫃）。"""
     info, delist = _reference()
-    twse = info[(info["type"] == "twse") & info["stock_id"].map(is_common_stock)]["stock_id"]
-    # 下市櫃表沒有標市場別，不在總覽裡的一律納入（多納入下市股只會讓結果更保守）
+    listed = info[(info["type"] == market) & info["stock_id"].map(is_common_stock)]["stock_id"]
     gone = delist[delist["stock_id"].map(is_common_stock) & (delist["date"] >= since)]["stock_id"]
-    gone = gone[~gone.isin(info["stock_id"]) | gone.isin(twse)]
-    return sorted(set(twse) | set(gone))
+    if market == "twse":
+        # 下市櫃表沒有標市場別，不在總覽裡的一律歸到上市（多納入下市股只會讓結果更保守）
+        gone = gone[~gone.isin(info["stock_id"]) | gone.isin(listed)]
+    else:
+        gone = gone[gone.isin(listed)]
+    return sorted(set(listed) | set(gone))
 
 
 def names() -> dict[str, str]:
@@ -104,14 +108,14 @@ def build(stock_ids: list[str], start: str = "2015-01-01", top_n: int = 140,
     return universe
 
 
-def save(universe: dict[pd.Timestamp, list[str]]) -> None:
+def save(universe: dict[pd.Timestamp, list[str]], name: str = "universe_pit") -> None:
     rows = [{"rebalance_date": d.date(), "rank": i + 1, "stock_id": s}
             for d, xs in universe.items() for i, s in enumerate(xs)]
-    pd.DataFrame(rows).to_csv(CACHE / "universe_pit.csv", index=False)
+    pd.DataFrame(rows).to_csv(CACHE / f"{name}.csv", index=False)
 
 
-def load() -> dict[pd.Timestamp, list[str]]:
-    df = pd.read_csv(CACHE / "universe_pit.csv", dtype={"stock_id": str})
+def load(name: str = "universe_pit") -> dict[pd.Timestamp, list[str]]:
+    df = pd.read_csv(CACHE / f"{name}.csv", dtype={"stock_id": str})
     df["rebalance_date"] = pd.to_datetime(df["rebalance_date"])
     return {d: g.sort_values("rank")["stock_id"].tolist() for d, g in df.groupby("rebalance_date")}
 
