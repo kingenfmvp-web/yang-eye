@@ -1,7 +1,7 @@
 """盤前參考：前一晚美股（費半、那斯達克、台積電 ADR）與預估 0050 開盤跳空。
 
     python -m yang_eye.premarket <輸出 premarket.json>
-台北時間每個交易日早上執行（美股收盤是台北凌晨 4–5 點）。美股資料還沒更新時結束碼 3。
+台北時間每個交易日早上執行（美股收盤是台北凌晨 4–5 點）。美股資料還沒更新或 FinMind 額度用完時結束碼 3。
 預估跳空＝近 3 年「0050 開盤跳空 ~ 前一晚費半報酬」的線性迴歸；只是參考，開盤後的走勢與美股無關（見 reports/us_overnight_report.md）。
 """
 from __future__ import annotations
@@ -78,7 +78,11 @@ def build(now: datetime | None = None) -> list[dict]:
 def main() -> None:
     out = Path(sys.argv[1])
     now = datetime.now(TZ)
-    rows = build(now)
+    try:
+        rows = build(now)
+    except data.QuotaExceeded as e:  # 匿名額度常被同一出口 IP 的其他流量用光：當成「還沒好」，讓排程稍後重試
+        print(f"FinMind 額度用完：{e}")
+        raise SystemExit(3)
     if pd.Timestamp(rows[0]["us_date"]) < expected_us_date(now):
         print(f"美股資料尚未更新到 {expected_us_date(now).date()}")
         raise SystemExit(3)

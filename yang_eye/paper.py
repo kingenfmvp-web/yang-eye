@@ -150,13 +150,15 @@ def dividend_factors(stock_ids: list[str], after: str, upto: str) -> dict[str, f
     return out
 
 
-def _finmind_wait(*args, wait_minutes: int = 10) -> pd.DataFrame:
-    while True:
+def _finmind_wait(*args, wait_minutes: int = 10, max_waits: int = 3) -> pd.DataFrame:
+    """額度用完就等；等太多次就當成資料還沒好，讓排程稍後重試（不要讓一次執行卡好幾個小時）。"""
+    for _ in range(max_waits):
         try:
             return data._finmind(*args)
         except data.QuotaExceeded as e:
             print(f"{e}；等 {wait_minutes} 分鐘", flush=True)
             time.sleep(wait_minutes * 60)
+    raise DataNotReady(f"FinMind 額度連續 {max_waits} 次用完（{args[0]}）")
 
 
 def fresh_revenue(stock_ids: list[str], today: str) -> pd.DataFrame:

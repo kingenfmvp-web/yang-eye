@@ -25,7 +25,7 @@
 3. **執行**：`.venv/bin/python -m yang_eye.paper ledger/`
    - 印出「已經更新過，略過」：今天沒有新資料（假日或已跑過），流程結束，不上傳。
    - 結束碼 3（資料尚未更新）：30 分鐘後重跑，最多 3 次；仍失敗就結束並回報。
-   - FinMind 額度用完時程式會自己等待，不要中斷。
+   - FinMind 額度用完時程式會等 10 分鐘重試，連續 3 次仍用完就以結束碼 3 結束，照上一條規則重跑。
 4. **上傳**：六個檔案各用 Artifact `publish` + `asset: true` + `file_path` 上傳（JSON 一次一個）。
    再用一次 `ArtifactData batch` 更新六個 `datasets/<id>`：
    `source: {kind: "file", url: <新的 /_blob/...>, name: "<id>.json"}`、
@@ -46,7 +46,7 @@
 
 1. 準備程式（同上）。
 2. 執行 `.venv/bin/python -m yang_eye.premarket ledger/premarket.json`
-   - 結束碼 3：美股資料還沒更新，20 分鐘後重跑一次；仍失敗就結束並回報。
+   - 結束碼 3：美股資料還沒更新或 FinMind 額度用完，20 分鐘後重跑一次；仍失敗就結束並回報。
 3. 用 `ArtifactData get` 讀 `datasets/premarket` 拿 `source.url` 與 `version`；
    上傳 `premarket.json`（Artifact `publish` + `asset: true`），
    `update` `datasets/premarket` 的 `source.url`、`source.name`、`updated`（帶 `if_version`），
