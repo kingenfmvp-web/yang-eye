@@ -26,8 +26,13 @@ def run_vbt(close: pd.DataFrame, weights: pd.DataFrame) -> pd.Series:
     return v[v.index >= start]
 
 
-def run_simple(close: pd.DataFrame, weights: pd.DataFrame) -> pd.Series:
-    """逐日讓權重隨價格漂移，換股日在收盤調整到目標權重並依換手率扣成本。"""
+def run_simple(close: pd.DataFrame, weights: pd.DataFrame, extra: pd.Series | None = None) -> pd.Series:
+    """逐日讓權重隨價格漂移，換股日在收盤調整到目標權重並依換手率扣成本。
+
+    extra：各股票每邊額外成本（如滑價），以欄名對應，沒列到的為 0。
+    """
+    cost = FEE_PER_SIDE + (np.zeros(close.shape[1]) if extra is None
+                           else extra.reindex(close.columns).fillna(0).to_numpy())
     rets = close.ffill().pct_change().fillna(0).to_numpy()
     target = weights.to_numpy()
     is_reb = ~np.isnan(target).all(axis=1)
@@ -43,7 +48,7 @@ def run_simple(close: pd.DataFrame, weights: pd.DataFrame) -> pd.Series:
             mask = ~np.isnan(target[i])
             new = cur.copy()
             new[mask] = target[i][mask]
-            r -= np.abs(new - cur).sum() * FEE_PER_SIDE * (1 + r)
+            r -= (np.abs(new - cur) * cost).sum() * (1 + r)
             cur = new
         out[i] = r
     port_ret = pd.Series(out, index=weights.index)
