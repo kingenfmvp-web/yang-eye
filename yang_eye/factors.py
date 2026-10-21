@@ -70,7 +70,7 @@ def op_margin_change(stock_ids: list[str]) -> dict[str, pd.DataFrame]:
         ttm = q.rolling(4, min_periods=4).sum()
         margin = ttm["OperatingIncome"] / ttm["Revenue"].where(ttm["Revenue"] > 0)
         chg = (margin - margin.shift(4)).dropna()
-        out[sid] = pd.DataFrame({"chg": chg, "avail": [available_from(d) for d in chg.index]})
+        out[sid] = pd.DataFrame({"chg": chg, "avail": pd.to_datetime([available_from(d) for d in chg.index])})
     return out
 
 
