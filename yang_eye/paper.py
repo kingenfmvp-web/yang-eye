@@ -55,10 +55,22 @@ def load(folder: Path) -> dict[str, list[dict]]:
     return {k: json.loads((folder / f"{k}.json").read_text(encoding="utf-8")) for k in FILES}
 
 
+def _clean(x):
+    """NaN／inf 不是合法 JSON（瀏覽器讀不了），一律存成 null。"""
+    if isinstance(x, float) and (x != x or x in (float("inf"), float("-inf"))):
+        return None
+    if isinstance(x, dict):
+        return {k: _clean(v) for k, v in x.items()}
+    if isinstance(x, list):
+        return [_clean(v) for v in x]
+    return x
+
+
 def save(folder: Path, ledger: dict[str, list[dict]]) -> None:
     folder.mkdir(parents=True, exist_ok=True)
     for k in FILES:
-        (folder / f"{k}.json").write_text(json.dumps(ledger[k], ensure_ascii=False, separators=(",", ":")),
+        (folder / f"{k}.json").write_text(json.dumps(_clean(ledger[k]), ensure_ascii=False, separators=(",", ":"),
+                                                     allow_nan=False),
                                           encoding="utf-8")
 
 
