@@ -25,6 +25,7 @@ class RevenueMomentumParams:
     regime_daily: bool = False  # v0.4：True＝每天檢查，大盤一穿越均線就調整；False＝只在換股日檢查
     trailing_stop: float | None = None  # v0.5：選出的股票從買進後最高收盤回落此比例，隔天收盤賣出，資金留現金到下次換股
     max_ret60: float | None = None  # v0.5：選股時排除近 60 日漲幅超過此比例的過熱股
+    trust_mode: str | None = None  # v0.6：投信買超的用法："rank"＝與營收各半排序、"filter"＝須投信淨買超 > 0
 
 
 def market_exposure(market: pd.Series, p: RevenueMomentumParams) -> pd.Series:
@@ -78,7 +79,8 @@ def target_weights(close: pd.DataFrame, volume: pd.DataFrame, rev: pd.DataFrame,
                    p: RevenueMomentumParams, start: str = "2015-01-01",
                    universe: dict[pd.Timestamp, list[str]] | None = None,
                    industry: dict[str, str] | None = None,
-                   market: pd.Series | None = None
+                   market: pd.Series | None = None,
+                   trust_ratio: pd.DataFrame | None = None
                    ) -> tuple[pd.DataFrame, dict[pd.Timestamp, list[str]]]:
     """回傳每個換股日的目標權重（其餘日期 NaN）與每期持股清單。
 
@@ -111,7 +113,16 @@ def target_weights(close: pd.DataFrame, volume: pd.DataFrame, rev: pd.DataFrame,
             i = close.index.get_loc(d)
             ret60 = close.iloc[i] / close.iloc[max(0, i - 60)] - 1
             mask &= ~(ret60 > p.max_ret60)
-        picks = select(df[mask], p, industry)
+        cand = df[mask]
+        if p.trust_mode and trust_ratio is not None:
+            tr = trust_ratio.loc[:d].iloc[-1].reindex(cand.index) if len(trust_ratio.loc[:d]) else pd.Series(dtype=float)
+            if p.trust_mode == "filter":
+                cand = cand[tr.reindex(cand.index) > 0]
+            elif p.trust_mode == "rank" and len(cand):
+                # 營收年增率與投信買超在候選股內各自排名，平均後當排序依據
+                key = (cand["yoy3"].rank(pct=True) + tr.rank(pct=True).fillna(0.5)) / 2
+                cand = cand.assign(yoy3=key)
+        picks = select(cand, p, industry)
 
         # 每檔固定 1/top_n（不放大單檔部位）；選不滿的空位依 p.fill 處理
         weights.loc[d] = 0.0
