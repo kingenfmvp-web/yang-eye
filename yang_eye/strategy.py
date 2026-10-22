@@ -26,6 +26,8 @@ class RevenueMomentumParams:
     trailing_stop: float | None = None  # v0.5：選出的股票從買進後最高收盤回落此比例，隔天收盤賣出，資金留現金到下次換股
     max_ret60: float | None = None  # v0.5：選股時排除近 60 日漲幅超過此比例的過熱股
     trust_mode: str | None = None  # v0.6：投信買超的用法："rank"＝與營收各半排序、"filter"＝須投信淨買超 > 0
+    min_rev3: float | None = None  # v0.8：近 3 月營收合計下限（元），去年同期也要至少一半，排除基期太低的年增暴衝
+    above_ma: int | None = None  # v0.8：個股前一天收盤須在 N 日均線之上
 
 
 def market_exposure(market: pd.Series, p: RevenueMomentumParams) -> pd.Series:
@@ -49,7 +51,7 @@ def revenue_signals(rev: pd.DataFrame) -> dict[str, pd.DataFrame]:
     yoy1 = wide / wide.shift(12) - 1
     accel = yoy1 - yoy1.shift(1).rolling(3).mean()
     new_high = wide >= wide.rolling(12).max()
-    return {"yoy3": yoy3, "yoy1": yoy1, "accel": accel, "new_high": new_high}
+    return {"yoy3": yoy3, "yoy1": yoy1, "accel": accel, "new_high": new_high, "rev3": r3, "rev3_ly": r3.shift(12)}
 
 
 def rebalance_dates(trading_days: pd.DatetimeIndex, day: int = 11) -> pd.DatetimeIndex:
@@ -88,6 +90,8 @@ def target_weights(close: pd.DataFrame, volume: pd.DataFrame, rev: pd.DataFrame,
     """
     sig = revenue_signals(rev)
     avg_vol = volume.rolling(20, min_periods=15).mean()
+    if p.above_ma:  # 只用到換股日前一天的收盤
+        above = (close > close.rolling(p.above_ma, min_periods=p.above_ma).mean()).shift(1)
     dates = rebalance_dates(close.index, p.rebalance_day)
     dates = dates[dates >= pd.Timestamp(start)]
 
@@ -109,6 +113,10 @@ def target_weights(close: pd.DataFrame, volume: pd.DataFrame, rev: pd.DataFrame,
             mask &= df["new_high"].fillna(False).astype(bool)
         if p.require_accel:
             mask &= df["accel"] > 0
+        if p.min_rev3 is not None:
+            mask &= (df["rev3"] >= p.min_rev3) & (df["rev3_ly"] >= p.min_rev3 / 2)
+        if p.above_ma:
+            mask &= above.loc[d].reindex(df.index).fillna(False).astype(bool)
         if p.max_ret60 is not None:
             i = close.index.get_loc(d)
             ret60 = close.iloc[i] / close.iloc[max(0, i - 60)] - 1
