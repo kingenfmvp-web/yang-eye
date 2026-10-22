@@ -45,9 +45,12 @@ TPEX_OPENAPI = "https://www.tpex.org.tw/openapi/v1"
 # v0.3：同產業最多 3 檔；選不滿的空位補 0050（回測的敏感度 B）。
 # 回測主方案是補選股池等權重，但 100 萬的帳戶分到上百檔時每筆只有幾千元，最低手續費 20 元會吃掉 1% 以上，所以模擬帳戶改補 0050。
 PARAMS = replace(RevenueMomentumParams(), max_per_industry=3, fill="0050")
+# v0.8（2026-11-11 起）：再加營收規模下限與「前一天收盤在 120 日均線之上」，見 reports/v08_report.md
+PARAMS = replace(PARAMS, min_rev3=3e8, above_ma=120)
 # 核心衛星：每次換股把資金調回 CORE_WEIGHT 放 0050（核心），其餘照 v0.3 選股（衛星）
 CORE_WEIGHT = 0.5
-STRATEGY_TEXT = (f"核心衛星：{CORE_WEIGHT:.0%} 0050 ＋ {1 - CORE_WEIGHT:.0%} 營收動能 v0.3（3月YoY>{PARAMS.min_yoy3:.0%}、12月新高、YoY加速、"
+STRATEGY_TEXT = (f"核心衛星：{CORE_WEIGHT:.0%} 0050 ＋ {1 - CORE_WEIGHT:.0%} 營收動能 v0.8（2026-11-11 換股起；10 月持股是依 v0.3 選的）（3月YoY>{PARAMS.min_yoy3:.0%}、12月新高、YoY加速、"
+                 f"近3月營收≥{PARAMS.min_rev3 / 1e8:.0f}億且去年同期≥一半、前一天收盤在{PARAMS.above_ma}日均線之上、"
                  f"均量>{PARAMS.min_avg_volume_lots:.0f}張，取前{PARAMS.top_n}檔各占衛星{1 / PARAMS.top_n:.0%}，同產業最多{PARAMS.max_per_industry}檔，"
                  f"選不滿的空位也買 {PARAMS.fill}）；每月換股時調回比例；新買進的股票換股日收漲停就不追，之後第一個不漲停的交易日再買，跌停賣不掉也延後")
 
@@ -354,7 +357,26 @@ def pick(members: list[str], avg_lots: dict[str, float], rev: pd.DataFrame, toda
         mask &= df["new_high"].fillna(False).astype(bool)
     if p.require_accel:
         mask &= df["accel"] > 0
+    if p.min_rev3 is not None:
+        mask &= (df["rev3"] >= p.min_rev3) & (df["rev3_ly"] >= p.min_rev3 / 2)
+    if p.above_ma:
+        mask &= df.index.isin(above_ma(df.index[mask].tolist(), today, p.above_ma))
     return select(df[mask], p, industry)
+
+
+def above_ma(stock_ids: list[str], today: str, n: int) -> set[str]:
+    """前一天收盤（還原股價）在 n 日均線之上的股票。只對通過營收條件的候選抓股價，省 FinMind 額度。"""
+    start = (pd.Timestamp(today) - pd.Timedelta(days=int(n * 1.6) + 30)).strftime("%Y-%m-%d")
+    out = set()
+    for sid in stock_ids:
+        px = _finmind_wait("TaiwanStockPrice", sid, start)
+        if px.empty:
+            continue
+        c = data.adjust_close(px, _finmind_wait("TaiwanStockDividendResult", sid, start))
+        c = c[c.index < pd.Timestamp(today)].dropna()
+        if len(c) >= n and c.iloc[-1] > c.iloc[-n:].mean():
+            out.add(sid)
+    return out
 
 
 def is_rebalance_day(today: str, last_rebalance: str | None) -> bool:
