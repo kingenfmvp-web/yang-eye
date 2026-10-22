@@ -143,6 +143,8 @@ def listing_dates() -> dict[str, str]:
 def taiex_tr(on: str) -> float | None:
     df = _finmind_wait("TaiwanStockTotalReturnIndex", "TAIEX",
                        (pd.Timestamp(on) - pd.Timedelta(days=10)).strftime("%Y-%m-%d"))
+    if df.empty:
+        return None
     df = df[df["date"] <= on]
     return float(df.iloc[-1]["price"]) if len(df) and df.iloc[-1]["date"] == on else None
 
@@ -152,6 +154,8 @@ def dividend_factors(stock_ids: list[str], after: str, upto: str) -> dict[str, f
     out = {}
     for sid in stock_ids:
         df = _finmind_wait("TaiwanStockDividendResult", sid, after)
+        if df.empty:  # 期間內沒有除權息時 FinMind 回傳沒有欄位的空表
+            continue
         df = df[(df["date"] > after) & (df["date"] <= upto)]
         f = 1.0
         for _, r in df.iterrows():
@@ -299,8 +303,10 @@ class DataNotReady(RuntimeError):
 def step(ledger: dict[str, list[dict]], snap: pd.DataFrame, log=print) -> dict[str, list[dict]]:
     acct = ledger["account"][0]
     today = snap["date"].iloc[0]
+    # 每次執行都記下檢查時間，儀表板才分得出「沒有新資料」和「沒有執行」
+    acct["last_check"] = datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M")
     if acct["last_update"] and today <= acct["last_update"]:
-        log(f"{today} 已經更新過，略過")
+        log(f"{today} 已經更新過，略過（只更新 account 的檢查時間）")
         return ledger
     if today < acct["inception"]:
         raise DataNotReady(f"證交所行情還停在 {today}，起始日 {acct['inception']} 的資料尚未發布")

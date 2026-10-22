@@ -1,4 +1,4 @@
-"""背景下載多因子研究資料；避開模擬帳戶（18:40）與盤前參考（08:10）排程時段，以免搶 FinMind 額度。"""
+"""背景下載多因子研究資料；避開模擬帳戶（10:10）與盤前參考（08:10）排程時段，以免搶 FinMind 額度。"""
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -6,7 +6,7 @@ from yang_eye import data
 from yang_eye import universe_pit as up
 
 TZ = timezone(timedelta(hours=8))
-QUIET = [((18, 20), (19, 40)), ((7, 50), (8, 50))]  # 台北時間
+QUIET = [((9, 50), (11, 40)), ((7, 50), (8, 50))]  # 台北時間
 
 
 def wait_if_quiet() -> None:

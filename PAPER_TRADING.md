@@ -13,9 +13,9 @@
 | `ew_basket` | 等權重對照組的成分與單位數 |
 | `value_snapshots` | 最近 30 個交易日的上市普通股成交金額快照（選股池用） |
 
-## 每個交易日收盤後（排程：台北時間週一至週五 18:40）
+## 每個交易日的隔天早上（排程：台北時間週二至週六 10:10）
 
-證交所 OpenAPI 的全市場行情隔天才發布，所以每晚處理的是**前一個交易日**；引擎一律處理 OpenAPI 上最新的那一天，不會漏日。
+證交所 OpenAPI 的全市場行情隔天早上才發布，所以每次處理的是**前一個交易日**；引擎一律處理 OpenAPI 上最新的那一天，不會漏日。
 
 1. **準備程式**：repo `kingenfmvp-web/yang-eye` clone 到 `/home/user/yang-eye`，
    `python3 -m venv .venv && .venv/bin/pip install -q -r requirements.txt`。
@@ -23,7 +23,7 @@
    記下 `source.url`（形如 `/_blob/<32 碼 id>`）與 `version`。
    用 Artifact `read`，`url` 為儀表板、`path` 為那 32 碼 id，存下後改名為 `ledger/<資料來源 id>.json`。
 3. **執行**：`.venv/bin/python -m yang_eye.paper ledger/`
-   - 印出「已經更新過，略過」：今天沒有新資料（假日或已跑過），流程結束，不上傳。
+   - 印出「已經更新過，略過」：沒有新資料（假日或已跑過）。**只上傳 `account.json`**（第 4、5 步只做 account 這一個），讓儀表板顯示最後檢查時間；其他五個不動。
    - 結束碼 3（資料尚未更新）：30 分鐘後重跑，最多 3 次；仍失敗就結束並回報。
    - FinMind 額度用完時程式會等 10 分鐘重試，連續 3 次仍用完就以結束碼 3 結束，照上一條規則重跑。
 4. **上傳**：六個檔案各用 Artifact `publish` + `asset: true` + `file_path` 上傳（JSON 一次一個）。
