@@ -36,6 +36,13 @@
 
 程式不需要 commit；這個流程只改儀表板裡的帳本。
 
+### AI 主題集中度（只記錄，不影響選股）
+
+引擎每次估值時，依 `yang_eye/themes.json`（ToAlpha 產業輪動頁的 AI 供應鏈分群）標出每檔衛星持股的子產業，
+並在 account 記下 `ai_weight`（AI 供應鏈占淨值）、`ai_count`、`top_theme`／`top_theme_weight`，
+nav 的模擬帳戶列也記 `ai_weight` 留下歷史。分群會變，約每月換股前手動執行
+`.venv/bin/python -m scripts.update_themes` 後 commit 更新；排程不跑這支。
+
 ## 建立新帳本（只做一次，已於 2026-10-20 完成）
 
 `.venv/bin/python -m yang_eye.paper ledger/ --init <起始日>`

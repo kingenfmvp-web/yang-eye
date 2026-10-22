@@ -78,6 +78,11 @@
       <span class="yx-big dash-skeleton" data-source="account" data-field="cash" data-row="0">—</span>
       <span class="yx-sub">持股 <span data-source="account" data-field="holdings_count" data-row="0">—</span> 檔</span>
     </div>
+    <div class="yx-card yx-tile" id="tile-theme">
+      <span class="yx-label">AI 供應鏈占淨值</span>
+      <span class="yx-big dash-skeleton" data-source="account" data-field="ai_weight" data-row="0">—</span>
+      <span class="yx-sub">衛星 <span data-source="account" data-field="ai_count" data-row="0">—</span> 檔；0050 另約半數是台積電</span>
+    </div>
   </section>
 
   <section class="yx-card" id="premarket">
@@ -110,6 +115,7 @@
             <th data-field="shares" class="hide-narrow">股數</th><th data-field="last_price">收盤價</th>
             <th data-field="market_value" class="hide-narrow">市值</th><th data-field="weight">權重</th>
             <th data-field="pnl" class="hide-narrow">損益</th><th data-field="pnl_pct">報酬率</th>
+            <th class="l hide-narrow" data-field="theme">AI 子產業</th>
           </tr></thead>
           <tbody></tbody>
         </table>
@@ -135,7 +141,7 @@
     <h2>規則與限制</h2>
     <p>策略：<span data-source="account" data-field="strategy" data-row="0">—</span>。</p>
     <p>選股池：<span data-source="account" data-field="universe" data-row="0">—</span>。成交金額取自每天收盤後存下的證交所行情快照（目前存有 <span data-source="ledger_status" data-field="value" data-where="metric=snapshot_days">—</span> 個交易日），等權重組合目前 <span data-source="ledger_status" data-field="value" data-where="metric=ew_members">—</span> 檔。</p>
-    <p>這是從起始日往後跑的模擬，換股只用當時已公布的月營收，沒有後見之明。月換股策略至少要跑 6 到 12 個月，結果才有參考價值；前幾個月的輸贏多半是運氣。成交假設為收盤價，未計滑價。研究用途，不構成投資建議。資料來源：FinMind、臺灣證券交易所。</p>
+    <p>這是從起始日往後跑的模擬，換股只用當時已公布的月營收，沒有後見之明。月換股策略至少要跑 6 到 12 個月，結果才有參考價值；前幾個月的輸贏多半是運氣。成交假設為收盤價，未計滑價。AI 子產業分群取自 ToAlpha 產業輪動頁（<span data-source="account" data-field="themes_as_of" data-row="0">—</span> 版），只記錄集中度、不影響選股；最大子產業 <span data-source="account" data-field="top_theme" data-row="0">—</span> 占 <span data-source="account" data-field="top_theme_weight" data-row="0">—</span>。研究用途，不構成投資建議。資料來源：FinMind、臺灣證券交易所、ToAlpha。</p>
   </section>
 </div>
 
@@ -194,6 +200,7 @@
       const v = a.data[0][el.dataset.field];
       if (v == null || v === '') el.textContent = '—';
       else if (['nav', 'cash', 'initial_capital'].includes(el.dataset.field)) el.textContent = money(v);
+      else if (['ai_weight', 'top_theme_weight'].includes(el.dataset.field)) el.textContent = d3.format('.0%')(v);
       else el.textContent = String(v);
     });
     if (a.status !== 'loading') unskel('[data-source="account"]');
@@ -284,6 +291,7 @@
       { text: price(r.last_price) }, { text: money(r.market_value), cls: 'hide-narrow' }, { text: d3.format('.1%')(r.weight) },
       { text: money(r.pnl), cls: 'hide-narrow ' + (r.pnl > 0 ? 'yx-up' : r.pnl < 0 ? 'yx-down' : '') },
       { text: pct(r.pnl_pct), cls: r.pnl_pct > 0 ? 'yx-up' : r.pnl_pct < 0 ? 'yx-down' : '' },
+      { text: r.theme || '', cls: 'l hide-narrow' },
     ]));
     fillTable('trades', (rows) => [...rows].sort((a, b) => (b.date + b.side).localeCompare(a.date + a.side)).map((r) => [
       { text: r.date }, { text: r.stock_id }, { text: r.name, cls: 'l' }, { text: r.side, cls: 'l' },

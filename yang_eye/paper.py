@@ -300,6 +300,37 @@ class DataNotReady(RuntimeError):
     pass
 
 
+def themes() -> tuple[dict[str, list[str]], str]:
+    """股票 → AI 供應鏈子產業（ToAlpha 分群，scripts/update_themes.py 更新）。一檔可屬多群。"""
+    f = Path(__file__).with_name("themes.json")
+    if not f.exists():
+        return {}, ""
+    t = json.loads(f.read_text(encoding="utf-8"))
+    out: dict[str, list[str]] = {}
+    for g, ids in t["groups"].items():
+        for sid in ids:
+            out.setdefault(sid, []).append(g)
+    return out, t["as_of"]
+
+
+def theme_exposure(holdings: list[dict], nav: float) -> dict:
+    """衛星持股（0050 以外）的 AI 主題集中度：占帳戶淨值的比例，與權重最大的子產業。"""
+    tags, as_of = themes()
+    by_group: dict[str, float] = {}
+    ai = 0.0
+    sat = [h for h in holdings if h["stock_id"] != PARAMS.fill]
+    for h in sat:
+        gs = tags.get(h["stock_id"], [])
+        h["theme"] = "、".join(gs)
+        if gs:
+            ai += h["market_value"] / nav
+        for g in gs:
+            by_group[g] = by_group.get(g, 0.0) + h["market_value"] / nav
+    top = max(by_group, key=by_group.get) if by_group else ""
+    return {"ai_weight": round(ai, 4), "ai_count": f"{sum(bool(h['theme']) for h in sat)}/{len(sat)}",
+            "top_theme": top, "top_theme_weight": round(by_group.get(top, 0.0), 4), "themes_as_of": as_of}
+
+
 def step(ledger: dict[str, list[dict]], snap: pd.DataFrame, log=print) -> dict[str, list[dict]]:
     acct = ledger["account"][0]
     today = snap["date"].iloc[0]
@@ -379,6 +410,7 @@ def step(ledger: dict[str, list[dict]], snap: pd.DataFrame, log=print) -> dict[s
     nav = acct["cash"] + sum(h["market_value"] for h in ledger["holdings"])
     for h in ledger["holdings"]:
         h["weight"] = h["market_value"] / nav
+    expo = theme_exposure(ledger["holdings"], nav)
     for b in ledger["ew_basket"]:
         b["last_price"] = prices.get(b["stock_id"], b["last_price"])
     ew_nav = sum(b["units"] * b["last_price"] for b in ledger["ew_basket"]) or acct["ew_nav"]
@@ -390,14 +422,16 @@ def step(ledger: dict[str, list[dict]], snap: pd.DataFrame, log=print) -> dict[s
     ledger["nav"] = [r for r in ledger["nav"] if r["date"] != today]
     for name, v in zip(PORTFOLIOS, (nav, ew_nav, taiex_nav)):
         ledger["nav"].append({"date": today, "portfolio": name, "nav": round(v),
-                              "cum_return": v / INITIAL_CAPITAL - 1})
+                              "cum_return": v / INITIAL_CAPITAL - 1,
+                              "ai_weight": expo["ai_weight"] if name == PORTFOLIOS[0] else None})
 
     acct.update({"strategy": STRATEGY_TEXT, "nav": round(nav), "ew_nav": round(ew_nav), "cash": round(acct["cash"]),
                  "last_update": today, "holdings_count": len(ledger["holdings"]),
-                 "next_rebalance": next_rebalance_after(today),
+                 "next_rebalance": next_rebalance_after(today), **expo,
                  "updated_at": datetime.now(TZ).strftime("%Y-%m-%d %H:%M")})
     log(f"{today} 淨值：模擬帳戶 {nav:,.0f}｜等權重 {ew_nav:,.0f}｜大盤 {taiex_nav:,.0f}｜"
-        f"持股 {len(ledger['holdings'])} 檔，新交易 {len(trades)} 筆")
+        f"持股 {len(ledger['holdings'])} 檔，新交易 {len(trades)} 筆｜"
+        f"AI 主題 {expo['ai_count']} 檔、占淨值 {expo['ai_weight']:.0%}，最大子產業 {expo['top_theme']} {expo['top_theme_weight']:.0%}")
     return ledger
 
 
