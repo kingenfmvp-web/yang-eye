@@ -49,7 +49,7 @@ PARAMS = replace(RevenueMomentumParams(), max_per_industry=3, fill="0050")
 CORE_WEIGHT = 0.5
 STRATEGY_TEXT = (f"核心衛星：{CORE_WEIGHT:.0%} 0050 ＋ {1 - CORE_WEIGHT:.0%} 營收動能 v0.3（3月YoY>{PARAMS.min_yoy3:.0%}、12月新高、YoY加速、"
                  f"均量>{PARAMS.min_avg_volume_lots:.0f}張，取前{PARAMS.top_n}檔各占衛星{1 / PARAMS.top_n:.0%}，同產業最多{PARAMS.max_per_industry}檔，"
-                 f"選不滿的空位也買 {PARAMS.fill}）；每月換股時調回比例")
+                 f"選不滿的空位也買 {PARAMS.fill}）；每月換股時調回比例；新買進的股票換股日收漲停就不追，之後第一個不漲停的交易日再買，跌停賣不掉也延後")
 
 
 # ---------- 帳本讀寫 ----------
@@ -134,22 +134,24 @@ def market_snapshot() -> pd.DataFrame:
     rows = _openapi("exchangeReport/STOCK_DAY_ALL")
     df = pd.DataFrame(rows)
     df["date"] = df["Date"].map(roc_to_date)
-    for c in ("TradeVolume", "TradeValue", "ClosingPrice"):
-        df[c] = pd.to_numeric(df[c].astype(str).str.replace(",", ""), errors="coerce")
+    for c in ("TradeVolume", "TradeValue", "ClosingPrice", "Change"):
+        df[c] = pd.to_numeric(df[c].astype(str).str.replace(",", "").str.strip(), errors="coerce")
     df = df.rename(columns={"Code": "stock_id", "Name": "name", "TradeVolume": "volume",
                             "TradeValue": "value", "ClosingPrice": "close"})
-    return df[["date", "stock_id", "name", "volume", "value", "close"]]
+    df["pct"] = df["Change"] / (df["close"] - df["Change"]).where(lambda x: x > 0)
+    return df[["date", "stock_id", "name", "volume", "value", "close", "pct"]]
 
 
 def tpex_snapshot() -> pd.DataFrame:
     """櫃買中心 OpenAPI：最近一個交易日全部上櫃證券行情（欄位對齊 market_snapshot）。"""
     df = pd.DataFrame(_openapi("tpex_mainboard_daily_close_quotes", base=TPEX_OPENAPI))
     df["date"] = df["Date"].map(roc_to_date)
-    for c in ("TradingShares", "TransactionAmount", "Close"):
-        df[c] = pd.to_numeric(df[c].astype(str).str.replace(",", ""), errors="coerce")
+    for c in ("TradingShares", "TransactionAmount", "Close", "Change"):
+        df[c] = pd.to_numeric(df[c].astype(str).str.replace(",", "").str.strip(), errors="coerce")
     df = df.rename(columns={"SecuritiesCompanyCode": "stock_id", "CompanyName": "name", "TradingShares": "volume",
                             "TransactionAmount": "value", "Close": "close"})
-    return df[["date", "stock_id", "name", "volume", "value", "close"]]
+    df["pct"] = df["Change"] / (df["close"] - df["Change"]).where(lambda x: x > 0)  # 除權息日是文字，算不出來就當沒漲跌停
+    return df[["date", "stock_id", "name", "volume", "value", "close", "pct"]]
 
 
 def tpex_listing_dates() -> dict[str, str]:
@@ -224,18 +226,30 @@ def fee(amount: float) -> int:
     return max(MIN_FEE, round(amount * FEE_RATE)) if amount > 0 else 0
 
 
+LIMIT = 0.095  # 收盤漲跌幅達 ±9.5% 視為漲停／跌停
+
+
+def limits(snap: pd.DataFrame) -> tuple[set[str], set[str]]:
+    return set(snap.loc[snap["pct"] >= LIMIT, "stock_id"]), set(snap.loc[snap["pct"] <= -LIMIT, "stock_id"])
+
+
 def rebalance(acct: dict, holdings: list[dict], prices: dict[str, float], names: dict[str, str],
               picks: list[str], today: str, top_n: int, fill: str | None = None,
-              core: float = 0.0) -> tuple[list[dict], list[dict]]:
+              core: float = 0.0, up: set[str] = frozenset(), down: set[str] = frozenset()
+              ) -> tuple[list[dict], list[dict]]:
     """以收盤價換股：先賣不在名單的、調整留下的，再買新的；股數取整數（含零股）。
 
     core 比例放 fill（核心）；其餘為衛星，每檔目標 衛星/top_n，選不滿的空位也買 fill。
+    漲停不追：新買進的股票今天收漲停就不買，那一格現金留著，記在 acct["pending"]，之後第一個不漲停的交易日再買；
+    整檔賣出遇到跌停也一樣延後（見 settle_pending）。
     """
     trades, pos = [], {h["stock_id"]: dict(h) for h in holdings}
     nav = acct["cash"] + sum(h["shares"] * prices.get(s, h["last_price"]) for s, h in pos.items())
     target_value = nav * (1 - core) / top_n
-    targets = {s: int(target_value // prices[s]) for s in picks if prices.get(s, 0) > 0}
-    fill_share = core + (1 - core) * (1 - len(targets) / top_n)
+    slots = [s for s in picks if prices.get(s, 0) > 0]
+    blocked = [s for s in slots if s in up and s not in pos]
+    targets = {s: int(target_value // prices[s]) for s in slots if s not in blocked}
+    fill_share = core + (1 - core) * (1 - len(slots) / top_n)  # 漲停延後的那幾格也算衛星，不給 0050
     if fill and fill_share > 0 and prices.get(fill, 0) > 0:
         targets[fill] = int(nav * fill_share // prices[fill])
 
@@ -247,6 +261,10 @@ def rebalance(acct: dict, holdings: list[dict], prices: dict[str, float], names:
         trades.append({"date": today, "stock_id": sid, "name": names.get(sid, ""), "side": side,
                        "shares": shares, "price": price, "amount": round(amount), "fee": f, "tax": tax})
 
+    keep = [s for s in pos if s != fill and targets.get(s, 0) == 0 and s in down]  # 跌停賣不掉
+    for sid in keep:
+        targets[sid] = pos[sid]["shares"]
+    acct["pending"] = {"buy": {s: round(target_value) for s in blocked}, "sell": keep}
     for sid in list(pos):  # 賣出或減碼
         diff = targets.get(sid, 0) - pos[sid]["shares"]
         if diff < 0:
@@ -271,6 +289,41 @@ def rebalance(acct: dict, holdings: list[dict], prices: dict[str, float], names:
         new.append({"stock_id": sid, "name": h.get("name") or names.get(sid, ""), "shares": h["shares"],
                     "cost": round(h["cost"]), "last_price": prices.get(sid, h.get("last_price", 0))})
     return new, trades
+
+
+def settle_pending(acct: dict, holdings: list[dict], prices: dict[str, float], names: dict[str, str],
+                   today: str, up: set[str], down: set[str]) -> tuple[list[dict], list[dict]]:
+    """換股日買不到（漲停）或賣不掉（跌停）的單，在之後第一個不漲停／不跌停的交易日收盤補做。"""
+    pend = acct.get("pending") or {"buy": {}, "sell": []}
+    if not pend["buy"] and not pend["sell"]:
+        return holdings, []
+    pos = {h["stock_id"]: h for h in holdings}
+    trades = []
+    for sid in [s for s in pend["sell"] if s in pos and s not in down and prices.get(s, 0) > 0]:
+        h, price = pos.pop(sid), prices[sid]
+        amount = h["shares"] * price
+        f, tax = fee(amount), round(amount * TAX_RATE)
+        acct["cash"] += amount - f - tax
+        trades.append({"date": today, "stock_id": sid, "name": h["name"], "side": "賣出", "shares": h["shares"],
+                       "price": price, "amount": round(amount), "fee": f, "tax": tax})
+        pend["sell"].remove(sid)
+    for sid, value in list(pend["buy"].items()):
+        price = prices.get(sid, 0)
+        if sid in up or price <= 0:
+            continue
+        n = int(value // price)
+        while n > 0 and n * price + fee(n * price) > acct["cash"]:
+            n -= 1
+        if n > 0:
+            amount = n * price
+            acct["cash"] -= amount + fee(amount)
+            trades.append({"date": today, "stock_id": sid, "name": names.get(sid, ""), "side": "買進", "shares": n,
+                           "price": price, "amount": round(amount), "fee": fee(amount), "tax": 0})
+            pos[sid] = {"stock_id": sid, "name": names.get(sid, ""), "shares": n,
+                        "cost": round(amount + fee(amount)), "last_price": price}
+        del pend["buy"][sid]
+    acct["pending"] = pend
+    return list(pos.values()), trades
 
 
 # ---------- 選股 ----------
@@ -382,12 +435,13 @@ def shadow_members(twse_snaps: list[dict], tpex_snaps: list[dict], today: str) -
 
 
 def shadow_rebalance(sh: dict, members: list[str], lots: dict[str, float], prices: dict[str, float],
-                     names: dict[str, str], today: str, log=print) -> None:
+                     names: dict[str, str], today: str, log=print,
+                     up: set[str] = frozenset(), down: set[str] = frozenset()) -> None:
     rev = fresh_revenue(members, today)
     picks = pick(members, lots, rev, today, PARAMS, universe_pit.industries())
     log(f"{today} {SHADOW} 換股：選股池 {len(members)} 檔，選出 {len(picks)} 檔 {picks}")
     sh["holdings"], trades = rebalance(sh, sh["holdings"], prices, names, picks, today,
-                                       PARAMS.top_n, PARAMS.fill, CORE_WEIGHT)
+                                       PARAMS.top_n, PARAMS.fill, CORE_WEIGHT, up, down)
     sh["trades"] += trades
     sh["last_rebalance"] = today
 
@@ -406,7 +460,7 @@ def shadow_value(sh: dict, prices: dict[str, float], today: str) -> dict:
 
 
 def shadow_step(sh: dict, prices: dict[str, float], names: dict[str, str], twse_snaps: list[dict],
-                today: str, log=print) -> dict | None:
+                today: str, log=print, up: set[str] = frozenset(), down: set[str] = frozenset()) -> dict | None:
     """v0.7 對照的一天：存上櫃快照、除權息、月換股、估值。上櫃行情日期對不上就整天略過，不影響模擬帳戶。"""
     tp = tpex_snapshot()
     if tp["date"].iloc[0] != today:
@@ -415,10 +469,14 @@ def shadow_step(sh: dict, prices: dict[str, float], names: dict[str, str], twse_
     sh["tpex_snapshots"] = keep_snapshots(sh["tpex_snapshots"], tp, today)
     prices = {**prices, **{k: v for k, v in zip(tp["stock_id"], tp["close"]) if pd.notna(v) and v > 0}}
     names = {**names, **dict(zip(tp["stock_id"], tp["name"]))}
+    tu, td = limits(tp)
+    up, down = up | tu, down | td
     adjust_shares(sh["holdings"], sh["last_update"], today, log)
+    sh["holdings"], done = settle_pending(sh, sh["holdings"], prices, names, today, up, down)
+    sh["trades"] += done
     if is_rebalance_day(today, sh["last_rebalance"]):
         members, lots = shadow_members(twse_snaps, sh["tpex_snapshots"], today)
-        shadow_rebalance(sh, members, lots, prices, names, today, log)
+        shadow_rebalance(sh, members, lots, prices, names, today, log, up, down)
     return shadow_value(sh, prices, today)
 
 
@@ -435,6 +493,7 @@ def step(ledger: dict[str, list[dict]], snap: pd.DataFrame, log=print) -> dict[s
     tr = taiex_tr(today)
     if tr is None:
         raise DataNotReady(f"FinMind 還沒有 {today} 的加權報酬指數，晚點再跑")
+    up, down = limits(snap)
     prices = dict(zip(snap["stock_id"], snap["close"].where(snap["close"] > 0)))
     prices = {k: v for k, v in prices.items() if pd.notna(v)}
     names = dict(zip(snap["stock_id"], snap["name"]))
@@ -447,8 +506,9 @@ def step(ledger: dict[str, list[dict]], snap: pd.DataFrame, log=print) -> dict[s
     if acct["last_update"]:
         adjust_shares(ledger["holdings"], last, today, log)
 
-    # 3. 換股
-    trades = []
+    # 3. 換股（之前漲停買不到／跌停賣不掉的單先補做）
+    ledger["holdings"], trades = settle_pending(acct, ledger["holdings"], prices, names, today, up, down)
+    ledger["trades"] += trades
     if is_rebalance_day(today, acct["last_rebalance"]):
         p = PARAMS
         members, lots = universe(ledger["value_snapshots"], listing_dates(), today)
@@ -464,8 +524,10 @@ def step(ledger: dict[str, list[dict]], snap: pd.DataFrame, log=print) -> dict[s
             picks = pick(members, lots, rev, today, p, universe_pit.industries())
             log(f"{today} 換股：選股池 {len(members)} 檔，選出 {len(picks)} 檔 {picks}")
             ledger["holdings"], trades = rebalance(acct, ledger["holdings"], prices, names,
-                                                   picks, today, p.top_n, p.fill, CORE_WEIGHT)
+                                                   picks, today, p.top_n, p.fill, CORE_WEIGHT, up, down)
             ledger["trades"] += trades
+            if acct["pending"]["buy"] or acct["pending"]["sell"]:
+                log(f"漲停延後買進 {list(acct['pending']['buy'])}，跌停延後賣出 {acct['pending']['sell']}")
             # 等權重對照組：同樣的流動性門檻，換股成本以每邊 0.2925% 估計
             eligible = [s for s in members if lots.get(s, 0) > p.min_avg_volume_lots and s in prices]
             ew_value = sum(b["units"] * prices.get(b["stock_id"], b["last_price"])
@@ -506,7 +568,7 @@ def step(ledger: dict[str, list[dict]], snap: pd.DataFrame, log=print) -> dict[s
                               "ai_weight": expo["ai_weight"] if name == PORTFOLIOS[0] else None})
 
     if ledger.get("shadow") and ledger["shadow"][0]["last_update"] < today:
-        row = shadow_step(ledger["shadow"][0], prices, names, ledger["value_snapshots"], today, log)
+        row = shadow_step(ledger["shadow"][0], prices, names, ledger["value_snapshots"], today, log, up, down)
         if row:
             ledger["nav"].append(row)
             log(f"{SHADOW} 淨值 {row['nav']:,.0f}，AI 主題占 {row['ai_weight']:.0%}")
