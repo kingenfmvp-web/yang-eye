@@ -73,6 +73,11 @@
       <span class="yx-big dash-skeleton" data-source="excess" data-field="value" data-where="metric=vs_ew">—</span>
       <span class="yx-sub">等權重 <span data-source="latest" data-field="cum_return" data-where="portfolio=選股池等權重">—</span></span>
     </div>
+    <div class="yx-card yx-tile" id="tile-vs-shadow">
+      <span class="yx-label">相對 v0.7 對照</span>
+      <span class="yx-big dash-skeleton" data-source="excess" data-field="value" data-where="metric=vs_shadow">—</span>
+      <span class="yx-sub">v0.7（加入上櫃）<span data-source="latest" data-field="cum_return" data-where="portfolio=v0.7 對照（上市＋上櫃）">—</span>；負的代表 v0.7 比較好</span>
+    </div>
     <div class="yx-card yx-tile" id="tile-cash">
       <span class="yx-label">現金（元）</span>
       <span class="yx-big dash-skeleton" data-source="account" data-field="cash" data-row="0">—</span>
@@ -137,6 +142,19 @@
     </div>
   </section>
 
+  <section class="yx-card" id="shadow-card">
+    <h2>v0.7 對照的持股</h2>
+    <p class="yx-note">沒有換成 v0.7，只在旁邊用同樣的規則記錄：選股池改成上市前 140 名加上櫃前 140 名，其他和模擬帳戶一樣（核心衛星、每月換股、同產業最多 3 檔）。從 <span class="yx-plain" data-source="shadow" data-field="inception">—</span> 收盤起跑，起始資金等於模擬帳戶當天淨值，所以兩條線從同一點出發。AI 供應鏈占淨值 <span class="yx-plain" data-source="shadow" data-field="ai_weight">—</span>。</p>
+    <div class="yx-tablebox">
+      <table id="shadow-holdings">
+        <thead><tr>
+          <th>代號</th><th class="l">名稱</th><th>收盤價</th><th>權重</th><th class="l hide-narrow">AI 子產業</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
   <section class="yx-card yx-method" id="method">
     <h2>規則與限制</h2>
     <p>策略：<span data-source="account" data-field="strategy" data-row="0">—</span>。</p>
@@ -146,7 +164,7 @@
 </div>
 
 <script>
-  const ORDER = ['模擬帳戶', '加權報酬指數', '選股池等權重'];
+  const ORDER = ['模擬帳戶', '加權報酬指數', '選股池等權重', 'v0.7 對照（上市＋上櫃）'];
   window.yxOrder = ORDER;
 
   dash.calc('latest', {
@@ -171,6 +189,7 @@
       return [
         { metric: 'vs_taiex', value: get('加權報酬指數') == null ? null : me - get('加權報酬指數') },
         { metric: 'vs_ew', value: get('選股池等權重') == null ? null : me - get('選股池等權重') },
+        { metric: 'vs_shadow', value: get('v0.7 對照（上市＋上櫃）') == null ? null : me - get('v0.7 對照（上市＋上櫃）') },
       ];
     },
   });
@@ -293,6 +312,21 @@
       { text: pct(r.pnl_pct), cls: r.pnl_pct > 0 ? 'yx-up' : r.pnl_pct < 0 ? 'yx-down' : '' },
       { text: r.theme || '', cls: 'l hide-narrow' },
     ]));
+    const sh = dash.data('shadow');
+    const s0 = sh.status === 'ok' ? sh.data[0] : null;
+    document.querySelectorAll('[data-source="shadow"]').forEach((el) => {
+      const v = s0 ? s0[el.dataset.field] : null;
+      el.textContent = v == null ? '—' : el.dataset.field === 'ai_weight' ? d3.format('.0%')(v) : String(v);
+    });
+    const sb = document.querySelector('#shadow-holdings tbody');
+    sb.replaceChildren();
+    for (const r of [...(s0?.holdings || [])].sort((a, b) => b.market_value - a.market_value)) {
+      const tr = document.createElement('tr');
+      for (const [text, cls] of [[r.stock_id], [r.name, 'l'], [price(r.last_price)], [d3.format('.1%')(r.weight)], [r.theme || '', 'l hide-narrow']]) {
+        const td = document.createElement('td'); if (cls) td.className = cls; td.textContent = text; tr.appendChild(td);
+      }
+      sb.appendChild(tr);
+    }
     fillTable('trades', (rows) => [...rows].sort((a, b) => (b.date + b.side).localeCompare(a.date + a.side)).map((r) => [
       { text: r.date }, { text: r.stock_id }, { text: r.name, cls: 'l' }, { text: r.side, cls: 'l' },
       { text: d3.format(',')(r.shares), cls: 'hide-narrow' }, { text: price(r.price) },

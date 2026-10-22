@@ -2,7 +2,7 @@
 
 儀表板（帳本所在地）：https://claude.ai/artifact/U9eXqyCDsCEGPDoVqrXBRy
 
-帳本是儀表板裡的六個資料來源，每個都是一個 JSON 檔（儀表板的 asset）：
+帳本是儀表板裡的七個資料來源，每個都是一個 JSON 檔（儀表板的 asset）：
 
 | 資料來源 id | 內容 |
 |---|---|
@@ -12,6 +12,7 @@
 | `trades` | 所有交易：日期、買賣、股數、價格、手續費、證交稅 |
 | `ew_basket` | 等權重對照組的成分與單位數 |
 | `value_snapshots` | 最近 30 個交易日的上市普通股成交金額快照（選股池用） |
+| `shadow` | v0.7 對照（上市＋上櫃選股池）：一列，含現金、持股、交易與上櫃成交金額快照；只記錄，不取代模擬帳戶 |
 
 ## 每個交易日的隔天早上（排程：台北時間週二至週六 10:10）
 
@@ -19,22 +20,28 @@
 
 1. **準備程式**：repo `kingenfmvp-web/yang-eye` clone 到 `/home/user/yang-eye`，
    `python3 -m venv .venv && .venv/bin/pip install -q -r requirements.txt`。
-2. **下載帳本**：對六個 id 各做一次 `ArtifactData get`（collection `datasets`），
+2. **下載帳本**：對七個 id 各做一次 `ArtifactData get`（collection `datasets`），
    記下 `source.url`（形如 `/_blob/<32 碼 id>`）與 `version`。
    用 Artifact `read`，`url` 為儀表板、`path` 為那 32 碼 id，存下後改名為 `ledger/<資料來源 id>.json`。
 3. **執行**：`.venv/bin/python -m yang_eye.paper ledger/`
    - 印出「已經更新過，略過」：沒有新資料（假日或已跑過）。**只上傳 `account.json`**（第 4、5 步只做 account 這一個），讓儀表板顯示最後檢查時間；其他五個不動。
    - 結束碼 3（資料尚未更新）：30 分鐘後重跑，最多 3 次；仍失敗就結束並回報。
    - FinMind 額度用完時程式會等 10 分鐘重試，連續 3 次仍用完就以結束碼 3 結束，照上一條規則重跑。
-4. **上傳**：六個檔案各用 Artifact `publish` + `asset: true` + `file_path` 上傳（JSON 一次一個）。
-   再用一次 `ArtifactData batch` 更新六個 `datasets/<id>`：
+4. **上傳**：七個檔案各用 Artifact `publish` + `asset: true` + `file_path` 上傳（JSON 一次一個）。
+   再用一次 `ArtifactData batch` 更新七個 `datasets/<id>`：
    `source: {kind: "file", url: <新的 /_blob/...>, name: "<id>.json"}`、
    `updated: {at: <ISO 時間>, by: "Claude（陽之眼模擬引擎）"}`，每筆帶上第 2 步的 `if_version`。
-5. **清理**：batch 成功後，用 Artifact `delete`（`url` 儀表板、`path` 舊的 32 碼 id）刪掉六個舊 asset。
+5. **清理**：batch 成功後，用 Artifact `delete`（`url` 儀表板、`path` 舊的 32 碼 id）刪掉七個舊 asset。
 6. **回報**：一行摘要，即程式最後一行（日期、三個組合的淨值、持股數、新交易筆數）。
    若當天有換股，列出買進與賣出的股票。
 
 程式不需要 commit；這個流程只改儀表板裡的帳本。
+
+### v0.7 對照（只記錄）
+
+引擎在模擬帳戶之後，用櫃買中心 OpenAPI 的上櫃行情更新 `shadow`：同樣的核心衛星規則，選股池改成上市前 140 ∪ 上櫃前 140。
+上櫃行情日期和上市對不上時，只略過 v0.7 對照當天，模擬帳戶照常更新。
+2026-10-21 以 `scripts/init_shadow.py` 建立，起始資金＝模擬帳戶當天淨值。
 
 ### AI 主題集中度（只記錄，不影響選股）
 

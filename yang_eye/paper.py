@@ -37,8 +37,11 @@ TOP_N_UNIVERSE = 140
 MIN_LISTED_DAYS = 182
 SNAPSHOT_DAYS = 30
 TZ = timezone(timedelta(hours=8))
-FILES = ["account", "nav", "holdings", "trades", "ew_basket", "value_snapshots"]
+FILES = ["account", "nav", "holdings", "trades", "ew_basket", "value_snapshots", "shadow"]
 PORTFOLIOS = ("模擬帳戶", "選股池等權重", "加權報酬指數")
+# v0.7 對照：同樣的核心衛星，選股池改成上市前 140 ∪ 上櫃前 140；只記錄、不取代模擬帳戶
+SHADOW = "v0.7 對照（上市＋上櫃）"
+TPEX_OPENAPI = "https://www.tpex.org.tw/openapi/v1"
 # v0.3：同產業最多 3 檔；選不滿的空位補 0050（回測的敏感度 B）。
 # 回測主方案是補選股池等權重，但 100 萬的帳戶分到上百檔時每筆只有幾千元，最低手續費 20 元會吃掉 1% 以上，所以模擬帳戶改補 0050。
 PARAMS = replace(RevenueMomentumParams(), max_per_industry=3, fill="0050")
@@ -52,7 +55,9 @@ STRATEGY_TEXT = (f"核心衛星：{CORE_WEIGHT:.0%} 0050 ＋ {1 - CORE_WEIGHT:.0
 # ---------- 帳本讀寫 ----------
 
 def load(folder: Path) -> dict[str, list[dict]]:
-    return {k: json.loads((folder / f"{k}.json").read_text(encoding="utf-8")) for k in FILES}
+    """shadow 是後來加的，沒有這個檔就當作還沒建立 v0.7 對照。"""
+    return {k: json.loads((folder / f"{k}.json").read_text(encoding="utf-8"))
+            if (folder / f"{k}.json").exists() or k != "shadow" else None for k in FILES}
 
 
 def _clean(x):
@@ -69,6 +74,8 @@ def _clean(x):
 def save(folder: Path, ledger: dict[str, list[dict]]) -> None:
     folder.mkdir(parents=True, exist_ok=True)
     for k in FILES:
+        if ledger.get(k) is None:
+            continue
         (folder / f"{k}.json").write_text(json.dumps(_clean(ledger[k]), ensure_ascii=False, separators=(",", ":"),
                                                      allow_nan=False),
                                           encoding="utf-8")
@@ -109,17 +116,17 @@ def roc_to_date(s: str) -> str:
     return f"{int(s[:3]) + 1911}-{s[3:5]}-{s[5:7]}"
 
 
-def _openapi(path: str, tries: int = 6) -> list[dict]:
-    """證交所 OpenAPI 偶爾會斷線，間隔 30 秒重試。"""
+def _openapi(path: str, tries: int = 6, base: str = data.TWSE_OPENAPI) -> list[dict]:
+    """證交所／櫃買中心 OpenAPI 偶爾會斷線，間隔 30 秒重試。"""
     for i in range(tries):
         try:
-            r = requests.get(f"{data.TWSE_OPENAPI}/{path}", timeout=60)
+            r = requests.get(f"{base}/{path}", timeout=60)
             if r.status_code == 200:
                 return r.json()
         except (requests.RequestException, ValueError):
             pass
         time.sleep(30)
-    raise RuntimeError(f"證交所 OpenAPI {path} 連續 {tries} 次失敗")
+    raise RuntimeError(f"OpenAPI {base}/{path} 連續 {tries} 次失敗")
 
 
 def market_snapshot() -> pd.DataFrame:
@@ -132,6 +139,23 @@ def market_snapshot() -> pd.DataFrame:
     df = df.rename(columns={"Code": "stock_id", "Name": "name", "TradeVolume": "volume",
                             "TradeValue": "value", "ClosingPrice": "close"})
     return df[["date", "stock_id", "name", "volume", "value", "close"]]
+
+
+def tpex_snapshot() -> pd.DataFrame:
+    """櫃買中心 OpenAPI：最近一個交易日全部上櫃證券行情（欄位對齊 market_snapshot）。"""
+    df = pd.DataFrame(_openapi("tpex_mainboard_daily_close_quotes", base=TPEX_OPENAPI))
+    df["date"] = df["Date"].map(roc_to_date)
+    for c in ("TradingShares", "TransactionAmount", "Close"):
+        df[c] = pd.to_numeric(df[c].astype(str).str.replace(",", ""), errors="coerce")
+    df = df.rename(columns={"SecuritiesCompanyCode": "stock_id", "CompanyName": "name", "TradingShares": "volume",
+                            "TransactionAmount": "value", "Close": "close"})
+    return df[["date", "stock_id", "name", "volume", "value", "close"]]
+
+
+def tpex_listing_dates() -> dict[str, str]:
+    rows = _openapi("mopsfin_t187ap03_O", base=TPEX_OPENAPI)
+    return {r["SecuritiesCompanyCode"]: f"{r['DateOfListing'][:4]}-{r['DateOfListing'][4:6]}-{r['DateOfListing'][6:]}"
+            for r in rows if len(r.get("DateOfListing", "")) == 8}
 
 
 def listing_dates() -> dict[str, str]:
@@ -331,6 +355,73 @@ def theme_exposure(holdings: list[dict], nav: float) -> dict:
             "top_theme": top, "top_theme_weight": round(by_group.get(top, 0.0), 4), "themes_as_of": as_of}
 
 
+def adjust_shares(holdings: list[dict], last: str, today: str, log=print) -> None:
+    """(last, today] 期間的除權息（股利再投入）、分割與面額變更，直接改股數。"""
+    acts = data.corporate_actions()
+    acts = acts[(acts["date"] > last) & (acts["date"] <= today)]
+    for h in holdings:
+        f = dividend_factors([h["stock_id"]], last, today).get(h["stock_id"], 1.0)
+        for _, a in acts[acts["stock_id"] == h["stock_id"]].iterrows():
+            f /= a["factor"]  # 1 拆 4：參考價變 1/4，股數變 4 倍
+        if f != 1.0:
+            log(f"{h['stock_id']} 除權息／分割，股數 ×{f:.4f}")
+            h["shares"] = int(round(h["shares"] * f))
+
+
+def keep_snapshots(old: list[dict], snap: pd.DataFrame, today: str) -> list[dict]:
+    keep = snap[snap["stock_id"].map(is_common_stock)][["date", "stock_id", "value", "volume"]]
+    rows = [r for r in old if r["date"] != today] + keep.to_dict("records")
+    dates = sorted({r["date"] for r in rows})[-SNAPSHOT_DAYS:]
+    return [r for r in rows if r["date"] in dates]
+
+
+def shadow_members(twse_snaps: list[dict], tpex_snaps: list[dict], today: str) -> tuple[list[str], dict[str, float]]:
+    m1, l1 = universe(twse_snaps, listing_dates(), today)
+    m2, l2 = universe(tpex_snaps, tpex_listing_dates(), today)
+    return m1 + m2, {**l1, **l2}
+
+
+def shadow_rebalance(sh: dict, members: list[str], lots: dict[str, float], prices: dict[str, float],
+                     names: dict[str, str], today: str, log=print) -> None:
+    rev = fresh_revenue(members, today)
+    picks = pick(members, lots, rev, today, PARAMS, universe_pit.industries())
+    log(f"{today} {SHADOW} 換股：選股池 {len(members)} 檔，選出 {len(picks)} 檔 {picks}")
+    sh["holdings"], trades = rebalance(sh, sh["holdings"], prices, names, picks, today,
+                                       PARAMS.top_n, PARAMS.fill, CORE_WEIGHT)
+    sh["trades"] += trades
+    sh["last_rebalance"] = today
+
+
+def shadow_value(sh: dict, prices: dict[str, float], today: str) -> dict:
+    for h in sh["holdings"]:
+        h["last_price"] = prices.get(h["stock_id"], h["last_price"])
+        h["market_value"] = round(h["shares"] * h["last_price"])
+    nav = sh["cash"] + sum(h["market_value"] for h in sh["holdings"])
+    for h in sh["holdings"]:
+        h["weight"] = h["market_value"] / nav
+    expo = theme_exposure(sh["holdings"], nav)
+    sh.update({"nav": round(nav), "last_update": today, "ai_weight": expo["ai_weight"]})
+    return {"date": today, "portfolio": SHADOW, "nav": round(nav),
+            "cum_return": nav / INITIAL_CAPITAL - 1, "ai_weight": expo["ai_weight"]}
+
+
+def shadow_step(sh: dict, prices: dict[str, float], names: dict[str, str], twse_snaps: list[dict],
+                today: str, log=print) -> dict | None:
+    """v0.7 對照的一天：存上櫃快照、除權息、月換股、估值。上櫃行情日期對不上就整天略過，不影響模擬帳戶。"""
+    tp = tpex_snapshot()
+    if tp["date"].iloc[0] != today:
+        log(f"{SHADOW}：上櫃行情是 {tp['date'].iloc[0]}，和上市 {today} 對不上，今天略過")
+        return None
+    sh["tpex_snapshots"] = keep_snapshots(sh["tpex_snapshots"], tp, today)
+    prices = {**prices, **{k: v for k, v in zip(tp["stock_id"], tp["close"]) if pd.notna(v) and v > 0}}
+    names = {**names, **dict(zip(tp["stock_id"], tp["name"]))}
+    adjust_shares(sh["holdings"], sh["last_update"], today, log)
+    if is_rebalance_day(today, sh["last_rebalance"]):
+        members, lots = shadow_members(twse_snaps, sh["tpex_snapshots"], today)
+        shadow_rebalance(sh, members, lots, prices, names, today, log)
+    return shadow_value(sh, prices, today)
+
+
 def step(ledger: dict[str, list[dict]], snap: pd.DataFrame, log=print) -> dict[str, list[dict]]:
     acct = ledger["account"][0]
     today = snap["date"].iloc[0]
@@ -349,23 +440,12 @@ def step(ledger: dict[str, list[dict]], snap: pd.DataFrame, log=print) -> dict[s
     names = dict(zip(snap["stock_id"], snap["name"]))
 
     # 1. 成交金額快照
-    keep = snap[snap["stock_id"].map(is_common_stock)][["date", "stock_id", "value", "volume"]]
-    snaps = [r for r in ledger["value_snapshots"] if r["date"] != today] + keep.to_dict("records")
-    dates = sorted({r["date"] for r in snaps})[-SNAPSHOT_DAYS:]
-    ledger["value_snapshots"] = [r for r in snaps if r["date"] in dates]
+    ledger["value_snapshots"] = keep_snapshots(ledger["value_snapshots"], snap, today)
 
     # 2. 除權息（股利再投入）、分割與面額變更
     last = acct["last_update"] or acct["inception"]
     if acct["last_update"]:
-        acts = data.corporate_actions()
-        acts = acts[(acts["date"] > last) & (acts["date"] <= today)]
-        for h in ledger["holdings"]:
-            f = dividend_factors([h["stock_id"]], last, today).get(h["stock_id"], 1.0)
-            for _, a in acts[acts["stock_id"] == h["stock_id"]].iterrows():
-                f /= a["factor"]  # 1 拆 4：參考價變 1/4，股數變 4 倍
-            if f != 1.0:
-                log(f"{h['stock_id']} 除權息／分割，股數 ×{f:.4f}")
-                h["shares"] = int(round(h["shares"] * f))
+        adjust_shares(ledger["holdings"], last, today, log)
 
     # 3. 換股
     trades = []
@@ -424,6 +504,12 @@ def step(ledger: dict[str, list[dict]], snap: pd.DataFrame, log=print) -> dict[s
         ledger["nav"].append({"date": today, "portfolio": name, "nav": round(v),
                               "cum_return": v / INITIAL_CAPITAL - 1,
                               "ai_weight": expo["ai_weight"] if name == PORTFOLIOS[0] else None})
+
+    if ledger.get("shadow") and ledger["shadow"][0]["last_update"] < today:
+        row = shadow_step(ledger["shadow"][0], prices, names, ledger["value_snapshots"], today, log)
+        if row:
+            ledger["nav"].append(row)
+            log(f"{SHADOW} 淨值 {row['nav']:,.0f}，AI 主題占 {row['ai_weight']:.0%}")
 
     acct.update({"strategy": STRATEGY_TEXT, "nav": round(nav), "ew_nav": round(ew_nav), "cash": round(acct["cash"]),
                  "last_update": today, "holdings_count": len(ledger["holdings"]),
