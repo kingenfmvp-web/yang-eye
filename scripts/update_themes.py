@@ -25,8 +25,9 @@ def fetch() -> dict[str, list[str]]:
         card = card.split('<ul class="ai-news">')[0].split('</section>')[0]
         name = html.unescape(re.search(r'<b class="nm">(.*?)</b>', card).group(1))
         groups[name] = re.findall(r'href="/stock/(\w+)"', card)
-    if len(groups) < 10:
-        raise RuntimeError(f"只解析到 {len(groups)} 群，頁面格式可能改了")
+    n = len({s for xs in groups.values() for s in xs})
+    if len(groups) < 10 or n < 50:  # 2026-11 起成分股改由瀏覽器載入，頁面裡可能只剩群名
+        raise RuntimeError(f"只解析到 {len(groups)} 群、{n} 檔，頁面格式可能改了；保留舊的 themes.json")
     return groups
 
 
